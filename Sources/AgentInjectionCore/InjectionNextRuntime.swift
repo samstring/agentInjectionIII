@@ -732,8 +732,9 @@ private final class InjectionRuntimeClient {
                 name,
                 to: fd
             )
+            let value = values[name] ?? nil
             try InjectionNextWire.writeString(
-                values[name] ?? "__NULL__",
+                value ?? "__NULL__",
                 to: fd
             )
         }
@@ -940,7 +941,7 @@ public final class InjectionNextRuntimeServer {
         address.sin_port = port.bigEndian
         address.sin_addr = in_addr(
             s_addr: devicesEnabled
-                ? htonl(INADDR_ANY)
+                ? UInt32(INADDR_ANY).bigEndian
                 : inet_addr("127.0.0.1")
         )
 
