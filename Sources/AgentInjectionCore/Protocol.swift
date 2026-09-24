@@ -32,6 +32,8 @@ public enum ControlAction: String, Codable, Sendable {
     case instancesStart = "instances_start"
     case instancesRead = "instances_read"
     case instancesStop = "instances_stop"
+    case testResults = "test_results"
+    case clearTestResults = "clear_test_results"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -465,6 +467,41 @@ public struct InstanceCountsResult: Codable, Sendable {
     }
 }
 
+public struct InjectedTestResult: Codable, Sendable {
+    public let name: String
+    public let passed: Bool
+    public let failures: Int
+    public let durationSeconds: Double?
+    public let messages: [String]
+
+    public init(
+        name: String,
+        passed: Bool,
+        failures: Int,
+        durationSeconds: Double? = nil,
+        messages: [String] = []
+    ) {
+        self.name = name
+        self.passed = passed
+        self.failures = failures
+        self.durationSeconds = durationSeconds
+        self.messages = messages
+    }
+}
+
+public struct TestResultsResult: Codable, Sendable {
+    public let connected: Bool
+    public let results: [InjectedTestResult]
+
+    public init(
+        connected: Bool,
+        results: [InjectedTestResult]
+    ) {
+        self.connected = connected
+        self.results = results
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -546,6 +583,7 @@ public struct ControlResponse: Codable, Sendable {
     public let compilerState: CompilerStateResult?
     public let callOrder: CallOrderResult?
     public let instances: InstanceCountsResult?
+    public let tests: TestResultsResult?
     public let error: ControlError?
 
     public init(
@@ -566,6 +604,7 @@ public struct ControlResponse: Codable, Sendable {
         compilerState: CompilerStateResult? = nil,
         callOrder: CallOrderResult? = nil,
         instances: InstanceCountsResult? = nil,
+        tests: TestResultsResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -585,6 +624,7 @@ public struct ControlResponse: Codable, Sendable {
         self.compilerState = compilerState
         self.callOrder = callOrder
         self.instances = instances
+        self.tests = tests
         self.error = error
     }
 
@@ -751,6 +791,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             instances: result
+        )
+    }
+
+    public static func tests(
+        id: String,
+        result: TestResultsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            tests: result
         )
     }
 
