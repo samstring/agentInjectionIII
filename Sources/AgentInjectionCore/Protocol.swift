@@ -9,6 +9,12 @@ public enum ControlAction: String, Codable, Sendable {
     case traceStart = "trace_start"
     case traceStop = "trace_stop"
     case traceRead = "trace_read"
+    case targets
+    case touchCapture = "touch_capture"
+    case touchRead = "touch_read"
+    case touchReplay = "touch_replay"
+    case logs
+    case clearLogs = "clear_logs"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -18,6 +24,9 @@ public struct ControlRequest: Codable, Sendable {
     public let path: String?
     public let filter: String?
     public let limit: Int?
+    public let target: String?
+    public let payload: String?
+    public let since: Double?
 
     public init(
         id: String = UUID().uuidString,
@@ -25,7 +34,10 @@ public struct ControlRequest: Codable, Sendable {
         files: [String]? = nil,
         path: String? = nil,
         filter: String? = nil,
-        limit: Int? = nil
+        limit: Int? = nil,
+        target: String? = nil,
+        payload: String? = nil,
+        since: Double? = nil
     ) {
         self.id = id
         self.action = action
@@ -33,6 +45,9 @@ public struct ControlRequest: Codable, Sendable {
         self.path = path
         self.filter = filter
         self.limit = limit
+        self.target = target
+        self.payload = payload
+        self.since = since
     }
 }
 
@@ -197,6 +212,82 @@ public struct TraceResult: Codable, Sendable {
     }
 }
 
+public struct RuntimeTarget: Codable, Sendable, Equatable {
+    public let id: String
+    public let platform: String?
+    public let arch: String?
+    public let temporaryPath: String?
+    public let peerAddress: String?
+    public let isLocal: Bool
+    public let connected: Bool
+
+    public init(
+        id: String,
+        platform: String? = nil,
+        arch: String? = nil,
+        temporaryPath: String? = nil,
+        peerAddress: String? = nil,
+        isLocal: Bool,
+        connected: Bool
+    ) {
+        self.id = id
+        self.platform = platform
+        self.arch = arch
+        self.temporaryPath = temporaryPath
+        self.peerAddress = peerAddress
+        self.isLocal = isLocal
+        self.connected = connected
+    }
+}
+
+public struct TargetsResult: Codable, Sendable {
+    public let targets: [RuntimeTarget]
+
+    public init(targets: [RuntimeTarget]) {
+        self.targets = targets
+    }
+}
+
+public struct TouchResult: Codable, Sendable {
+    public let target: String?
+    public let events: [String]
+    public let replayed: Int?
+
+    public init(
+        target: String?,
+        events: [String] = [],
+        replayed: Int? = nil
+    ) {
+        self.target = target
+        self.events = events
+        self.replayed = replayed
+    }
+}
+
+public struct LogEntry: Codable, Sendable {
+    public let timestamp: Double
+    public let level: String
+    public let message: String
+
+    public init(
+        timestamp: Double,
+        level: String,
+        message: String
+    ) {
+        self.timestamp = timestamp
+        self.level = level
+        self.message = message
+    }
+}
+
+public struct LogsResult: Codable, Sendable {
+    public let entries: [LogEntry]
+
+    public init(entries: [LogEntry]) {
+        self.entries = entries
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -268,6 +359,9 @@ public struct ControlResponse: Codable, Sendable {
     public let doctor: DoctorReport?
     public let screenshot: ScreenshotResult?
     public let trace: TraceResult?
+    public let targets: TargetsResult?
+    public let touch: TouchResult?
+    public let logs: LogsResult?
     public let error: ControlError?
 
     public init(
@@ -278,6 +372,9 @@ public struct ControlResponse: Codable, Sendable {
         doctor: DoctorReport? = nil,
         screenshot: ScreenshotResult? = nil,
         trace: TraceResult? = nil,
+        targets: TargetsResult? = nil,
+        touch: TouchResult? = nil,
+        logs: LogsResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -287,6 +384,9 @@ public struct ControlResponse: Codable, Sendable {
         self.doctor = doctor
         self.screenshot = screenshot
         self.trace = trace
+        self.targets = targets
+        self.touch = touch
+        self.logs = logs
         self.error = error
     }
 
@@ -343,6 +443,39 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             trace: result
+        )
+    }
+
+    public static func targets(
+        id: String,
+        result: TargetsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            targets: result
+        )
+    }
+
+    public static func touch(
+        id: String,
+        result: TouchResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            touch: result
+        )
+    }
+
+    public static func logs(
+        id: String,
+        result: LogsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            logs: result
         )
     }
 
