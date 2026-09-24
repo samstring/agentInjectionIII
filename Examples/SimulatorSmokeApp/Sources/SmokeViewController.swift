@@ -1,10 +1,21 @@
 import UIKit
 
+@objc(SmokeLifetimeProbe)
+private final class SmokeLifetimeProbe: NSObject {
+    private let token: String
+
+    override init() {
+        token = UUID().uuidString
+        super.init()
+    }
+}
+
 @objc(SmokeViewController)
 final class SmokeViewController: UIViewController {
     private let statusLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let touchButton = UIButton(type: .system)
+    private var lifetimeProbes: [SmokeLifetimeProbe] = []
     private var timer: Timer?
 
     override func viewDidLoad() {
@@ -104,6 +115,13 @@ final class SmokeViewController: UIViewController {
 
     @objc dynamic func tracePulse() {
         refreshSmokeState()
+
+        lifetimeProbes.append(
+            SmokeLifetimeProbe()
+        )
+        if lifetimeProbes.count > 16 {
+            lifetimeProbes.removeFirst()
+        }
     }
 
     @objc private func didReplayTouch() {
