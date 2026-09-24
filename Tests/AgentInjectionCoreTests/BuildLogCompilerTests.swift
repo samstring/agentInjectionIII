@@ -1,0 +1,84 @@
+import XCTest
+@testable import AgentInjectionCore
+
+final class BuildLogCompilerTests: XCTestCase {
+    func testSwiftRewriteKeepsOnlyRequestedPrimaryFile() {
+        let compiler = BuildLogCompiler()
+        let source = "/repo/Sources/Foo.swift"
+        let other = "/repo/Sources/Bar.swift"
+        let output = "/tmp/old.o"
+
+        let original = [
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend",
+            "-frontend",
+            "-emit-object",
+            "-primary-file", source,
+            "-primary-file", other,
+            "-target", "arm64-apple-ios18.0-simulator",
+            "-sdk", "/Applications/Xcode.app/SDK",
+            "-o", output
+        ].joined(separator: " ")
+
+        let rewritten = compiler.makeSingleFileCommand(
+            original: original,
+            source: source,
+            object: "/tmp/new.o"
+        )
+
+        XCTAssertTrue(rewritten.contains(" -primary-file \(source)"))
+        XCTAssertFalse(rewritten.contains(other))
+        XCTAssertFalse(rewritten.contains(output))
+        XCTAssertTrue(rewritten.contains(" -o '/tmp/new.o'"))
+        XCTAssertTrue(rewritten.contains(" -DDEBUG -DINJECTING"))
+        XCTAssertFalse(rewritten.contains("-emit-object"))
+    }
+
+    func testSwiftRewriteHandlesQuotedSourceWithSpaces() {
+        let compiler = BuildLogCompiler()
+        let source = "/repo/My App/Foo.swift"
+        let other = "/repo/My App/Bar.swift"
+
+        let original = """
+        /usr/bin/swift-frontend -frontend -emit-object         -primary-file "\(source)"         -primary-file "\(other)"         -target arm64-apple-ios18.0-simulator         -o "/tmp/old output.o"
+        """
+
+        let rewritten = compiler.makeSingleFileCommand(
+            original: original,
+            source: source,
+            object: "/tmp/new output.o"
+        )
+
+        XCTAssertTrue(
+            rewritten.contains("-primary-file \"\(source)\""),
+            rewritten
+        )
+        XCTAssertFalse(rewritten.contains(other), rewritten)
+        XCTAssertFalse(rewritten.contains("old output.o"), rewritten)
+        XCTAssertTrue(
+            rewritten.contains("-o '/tmp/new output.o'"),
+            rewritten
+        )
+    }
+
+    func testObjectiveCRewritePreservesCompileFlagsAndReplacesOutput() {
+        let compiler = BuildLogCompiler()
+        let source = "/repo/Sources/Foo.m"
+
+        let original = """
+        /usr/bin/clang -x objective-c -DCOCOAPODS=1         -I /repo/Pods/Headers/Public         -c \(source) -o /tmp/Foo.o
+        """
+
+        let rewritten = compiler.makeSingleFileCommand(
+            original: original,
+            source: source,
+            object: "/tmp/agent-Foo.o"
+        )
+
+        XCTAssertTrue(rewritten.contains("-DCOCOAPODS=1"))
+        XCTAssertTrue(rewritten.contains("-I /repo/Pods/Headers/Public"))
+        XCTAssertTrue(rewritten.contains("-c \(source)"))
+        XCTAssertFalse(rewritten.contains("/tmp/Foo.o"))
+        XCTAssertTrue(rewritten.contains("-o '/tmp/agent-Foo.o'"))
+        XCTAssertTrue(rewritten.contains("-Xclang -fno-validate-pch"))
+    }
+}
