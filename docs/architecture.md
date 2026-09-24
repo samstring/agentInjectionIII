@@ -1,132 +1,245 @@
 # Architecture
 
-## Target architecture
+## Current architecture
 
 ```mermaid
 flowchart TD
     Agent["AI Agent / Codex / ChatGPT"] --> CLI["injectionctl"]
 
-    CLI -->|"newline-delimited JSON over UDS"| Daemon["injectiond"]
+    CLI -->|"newline-delimited JSON over Unix Domain Socket"| Daemon["injectiond"]
 
     subgraph Host["macOS host"]
         Daemon --> Router["ControlRouter"]
-        Router --> Backend["InjectionBackend"]
-        Backend --> Engine["InjectionEngine"]
-        Engine --> Resolver["Compiler resolver"]
-        Resolver --> Next["NextCompiler"]
-        Next --> Swift["swift-frontend"]
-        Next --> Clang["clang"]
-        Swift --> Object[".o"]
+        Router --> Backend["InjectionNextRuntimeBackend"]
+
+        Backend --> Doctor["doctor / environment checks"]
+        Backend --> Compiler["BuildLogCompiler"]
+        Compiler --> Logs["Xcode .xcactivitylog"]
+        Compiler --> Swift["original swift-frontend command"]
+        Compiler --> Clang["original clang command"]
+        Swift --> Object["single-source .o"]
         Clang --> Object
-        Object --> Link["link dylib"]
-        Link --> Sign["codesign when required"]
-        Sign --> Server["InjectionServer"]
+        Object --> Link["xcrun clang -> injection dylib"]
+
+        Backend --> RuntimeServer["InjectionNextRuntimeServer :8887"]
     end
 
-    subgraph Target["iOS DEBUG app / Simulator"]
-        Client["Injection client runtime"]
-        Trace["SwiftTrace / ObjC runtime hooks"]
-        App["running app code"]
+    subgraph Target["iOS Simulator DEBUG app"]
+        Bootstrap["AgentInjectionBootstrap"]
+        Runtime["embedded iOSInjection.bundle"]
+        App["Swift + Objective-C + CocoaPods code"]
 
-        Client --> App
-        Client --> Trace
+        Bootstrap --> Runtime
+        Runtime --> App
     end
 
-    Server <-->|"injection protocol"| Client
+    Link --> Backend
+    RuntimeServer <-->|"InjectionNext wire protocol v4001"| Runtime
 ```
 
 ## Trigger model
 
-The important design change from classic hot reload is the trigger.
+The defining design choice is that an Agent command, not a file-system event,
+owns the injection lifecycle.
 
-Human hot reload:
+Classic human hot reload:
 
 ```text
-file save
+save source
   -> watcher
   -> compile
   -> inject
 ```
 
-Agent mode:
+agentInjectionIII:
 
 ```text
-agent edits one or more files
-  -> agent decides the edit is complete
+agent edits A.swift / B.m
+  -> agent finishes the logical change
+  -> injectionctl doctor A.swift
   -> injectionctl inject A.swift B.m
-  -> compile
-  -> inject
-  -> structured result
-  -> screenshot / trace / verify
+  -> compile / link / inject
+  -> structured JSON result
+  -> later: screenshot / trace / verify
 ```
 
-A watcher may be added later as an optional human convenience. It is not the control API.
+A watcher can exist later as an optional human frontend, but it is not part of
+the Agent control API.
 
-## Control-plane boundary
+## Process boundary
 
-`injectionctl` is intentionally stateless. It sends one request and exits.
+`injectionctl` is intentionally stateless:
+
+```text
+request -> JSON response -> exit
+```
 
 `injectiond` owns long-lived state:
 
-- compiler invocation cache
-- connected app runtime
-- injection sequence numbers
-- link settings
-- logs and diagnostics
-- future trace sessions
+- the Unix control socket
+- the connected app runtime
+- runtime platform / architecture / temporary path
+- recovered compiler command cache
+- future trace / screenshot sessions
 
-This separation makes the CLI easy for agents to invoke while keeping the injection engine stateful.
+This makes the command line safe for an Agent to call repeatedly without losing
+runtime state.
 
-## Backend boundary
+## Control protocol
 
-Phase 1 defines:
+Current actions:
+
+```text
+status
+doctor [SOURCE]
+inject FILE [FILE ...]
+load_dylib DYLIB
+```
+
+The backend boundary is:
 
 ```swift
 protocol InjectionBackend {
     var name: String { get }
+
     func status() -> BackendStatus
+    func doctor(path: String?) -> DoctorReport
     func inject(files: [String]) -> BackendInjectionResponse
+    func loadDylib(path: String) -> BackendInjectionResponse
 }
 ```
 
-The initial implementation is a scaffold. The real backend should reuse/refactor InjectionNext around:
+## Source compilation
 
-```text
-compiler invocation capture
-  -> compiler selection
-  -> NextCompiler.inject(source:)
-  -> recompile
-  -> link
-  -> codesign
-  -> InjectionServer
-```
+For an Objective-C + Swift + CocoaPods application, reconstructing compiler
+arguments from the Podfile would be too fragile.
 
-## CocoaPods projects
+Instead `BuildLogCompiler` searches Xcode's existing `.xcactivitylog` files
+and recovers the command Xcode already used for the requested source.
 
-For Objective-C + Swift projects using CocoaPods, the daemon must **reuse the original Xcode compiler invocation**. It must not construct `swiftc` or `clang` arguments from scratch.
-
-That preserves:
+That preserves the real target context:
 
 - Header Search Paths
 - Framework Search Paths
 - module maps
 - bridging headers
 - CocoaPods defines
-- target architecture
 - SDK
-- Swift flags
-- linker inputs
+- architecture / target triple
+- Swift frontend flags
 
-## Project-side runtime
+The recovered command is reduced to one requested source and a temporary
+object file. That object is linked into a dynamic library and handed to the
+runtime.
 
-The final target app integration should remain thin and DEBUG-only:
+Required Debug settings for the current log path:
 
 ```text
-App launch
-  -> load AgentInjection runtime/bundle
-  -> runtime connects to injectiond
-  -> receive dylib
-  -> dlopen / symbol rebinding
+-Xlinker -interposable
+EMIT_FRONTEND_COMMAND_LINES = YES
+COMPILATION_CACHE_ENABLE_CACHING = NO
 ```
 
-It should be possible for teammates to continue using InjectionIII.app while agent-enabled developers use the embedded runtime.
+## Runtime boundary
+
+The current Agent runtime deliberately uses the InjectionNext client protocol:
+
+```text
+iOSInjection.bundle
+    |
+    | TCP 127.0.0.1:8887
+    |
+InjectionNextRuntimeServer
+```
+
+Handshake metadata includes:
+
+```text
+protocol version 4001
+platform
+architecture
+runtime temporary directory
+```
+
+For Simulator injection, the daemon copies the produced dylib into the
+runtime's temporary directory, sends the `load` command, and waits for the
+runtime's `injected` / `failed` response.
+
+## Project integration and team coexistence
+
+The shared application contains a very small DEBUG bootstrap:
+
+```text
+AgentInjectionBootstrap
+       |
+       +-- embedded iOSInjection.bundle exists
+       |       -> Agent/headless runtime
+       |
+       +-- embedded bundle absent
+               -> /Applications/InjectionIII.app/.../iOSInjection.bundle
+```
+
+The local bundle is copied by `scripts/embed-runtime.sh` only when installed
+under the developer's home directory, so there is no conditional Podfile and no
+`Podfile.lock` difference.
+
+This lets the Agent-enabled developer use:
+
+```text
+Agent -> injectionctl -> injectiond
+```
+
+while teammates keep:
+
+```text
+Developer -> InjectionIII.app
+```
+
+from the same Xcode project.
+
+## Why not directly reuse an arbitrary classic InjectionIII bundle?
+
+The classic InjectionIII/HotReloading protocol differs from InjectionNext and
+InjectionIII builds generate a matching injection salt as part of the app/bundle
+build. A generic headless server therefore cannot reliably assume that any
+random prebuilt InjectionIII bundle has the same handshake values.
+
+For now the Agent path builds and patches a known InjectionNext-compatible
+runtime locally with `scripts/install-runtime.sh`, while the fallback remains
+available for teammates using InjectionIII.app.
+
+## Doctor
+
+`injectionctl doctor` is intended as the Agent's preflight.
+
+It checks:
+
+- selected Xcode developer directory
+- configured project root
+- available Xcode build logs
+- runtime connection
+- runtime handshake metadata
+- locally installed runtime bundle
+
+When a source is supplied, it also checks:
+
+- source path exists
+- a matching Xcode compiler command can be recovered
+
+This separates environment/setup failures from actual compiler or runtime
+injection failures.
+
+## Next boundaries
+
+The next high-value layers are:
+
+```text
+structured compiler diagnostics
+injection lifecycle event stream
+trace / untrace + method-call output
+screenshot
+touch record / replay
+persistent compiler command cache
+multiple runtime clients / target selection
+device signing and transport
+```
