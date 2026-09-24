@@ -103,6 +103,24 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.error?.code, "MISSING_PATH")
     }
 
+    func testScreenshotFailsCleanlyWithoutRuntime() throws {
+        let backend = ScaffoldInjectionBackend()
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(
+            action: .screenshot,
+            path: "/tmp/test.png"
+        )
+        let response = try route(request, through: router)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error?.code, "RUNTIME_NOT_READY")
+        XCTAssertNil(response.screenshot)
+    }
+
     func testDoctorReturnsStructuredFailureForScaffoldBackend() throws {
         let backend = ScaffoldInjectionBackend()
         let router = ControlRouter(
