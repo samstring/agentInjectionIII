@@ -34,6 +34,7 @@ public enum ControlAction: String, Codable, Sendable {
     case instancesStop = "instances_stop"
     case testResults = "test_results"
     case clearTestResults = "clear_test_results"
+    case reorderProject = "reorder_project"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -584,6 +585,7 @@ public struct ControlResponse: Codable, Sendable {
     public let callOrder: CallOrderResult?
     public let instances: InstanceCountsResult?
     public let tests: TestResultsResult?
+    public let reorder: ProjectReorderPlan?
     public let error: ControlError?
 
     public init(
@@ -605,6 +607,7 @@ public struct ControlResponse: Codable, Sendable {
         callOrder: CallOrderResult? = nil,
         instances: InstanceCountsResult? = nil,
         tests: TestResultsResult? = nil,
+        reorder: ProjectReorderPlan? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -625,6 +628,7 @@ public struct ControlResponse: Codable, Sendable {
         self.callOrder = callOrder
         self.instances = instances
         self.tests = tests
+        self.reorder = reorder
         self.error = error
     }
 
@@ -802,6 +806,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             tests: result
+        )
+    }
+
+    public static func reorder(
+        id: String,
+        result: ProjectReorderPlan
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            reorder: result
         )
     }
 
