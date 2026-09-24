@@ -41,6 +41,7 @@ private func printUsage() {
       injectionctl [--socket PATH] inject FILE [FILE ...]
       injectionctl [--socket PATH] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
+      injectionctl [--socket PATH] screenshot [OUTPUT.png]
 
     Responses are JSON and commands return a non-zero exit status on failure.
     """)
@@ -119,6 +120,17 @@ case "doctor":
     }
     request = ControlRequest(
         action: .doctor,
+        path: options.arguments.count == 2
+            ? absolutePath(options.arguments[1])
+            : nil
+    )
+
+case "screenshot":
+    guard options.arguments.count <= 2 else {
+        fatalUsage("screenshot accepts at most one output path.")
+    }
+    request = ControlRequest(
+        action: .screenshot,
         path: options.arguments.count == 2
             ? absolutePath(options.arguments[1])
             : nil
