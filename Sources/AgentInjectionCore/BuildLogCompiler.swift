@@ -74,6 +74,26 @@ public final class BuildLogCompiler {
         }
     }
 
+    public func intermediatesDirectory() -> URL? {
+        guard let newest = buildLogsNewestFirst().first else {
+            return nil
+        }
+
+        // .../<DerivedData>/<Workspace>/Logs/Build/<file>.xcactivitylog
+        let workspaceRoot = newest
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let intermediates = workspaceRoot
+            .appendingPathComponent("Build")
+            .appendingPathComponent("Intermediates.noindex")
+
+        return fileManager.fileExists(
+            atPath: intermediates.path
+        ) ? intermediates : nil
+    }
+
     public func diagnostics(
         source: String? = nil,
         platform: String? = nil
