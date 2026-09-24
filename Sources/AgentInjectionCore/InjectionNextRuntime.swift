@@ -1319,7 +1319,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         projectRoot: String? = nil,
         derivedDataRoot: String? = nil,
         codeSigningIdentity: String? = nil,
-        xcodePath: String? = nil
+        xcodePath: String? = nil,
+        deviceTesting: Bool = false,
+        deviceLibraries: [String] = [
+            "-framework", "XCTest",
+            "-lXCTestSwiftSupport"
+        ]
     ) {
         self.runtimeServer = runtimeServer
         self.traceServer = traceServer
@@ -1328,7 +1333,9 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         self.compiler = BuildLogCompiler(
             projectRoot: projectRoot,
             derivedDataRoot: derivedDataRoot,
-            xcodePath: xcodePath
+            xcodePath: xcodePath,
+            deviceTesting: deviceTesting,
+            deviceLibraries: deviceLibraries
         )
 
         if let xcodePath {
@@ -1364,7 +1371,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "swiftui-prepare",
                 "xcode-selection",
                 "last-error",
-                "lifecycle-events"
+                "lifecycle-events",
+                "device-testing"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
