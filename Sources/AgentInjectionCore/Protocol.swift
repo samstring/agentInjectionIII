@@ -21,6 +21,8 @@ public enum ControlAction: String, Codable, Sendable {
     case setXcodePath = "set_xcode_path"
     case launchXcode = "launch_xcode"
     case getLastError = "get_last_error"
+    case events
+    case clearEvents = "clear_events"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -315,6 +317,45 @@ public struct LastErrorResult: Codable, Sendable {
     }
 }
 
+public struct InjectionEvent: Codable, Sendable {
+    public let sequence: Int64
+    public let timestamp: Double
+    public let phase: String
+    public let source: String?
+    public let target: String?
+    public let message: String?
+    public let compileMilliseconds: Double?
+    public let linkMilliseconds: Double?
+
+    public init(
+        sequence: Int64,
+        timestamp: Double,
+        phase: String,
+        source: String? = nil,
+        target: String? = nil,
+        message: String? = nil,
+        compileMilliseconds: Double? = nil,
+        linkMilliseconds: Double? = nil
+    ) {
+        self.sequence = sequence
+        self.timestamp = timestamp
+        self.phase = phase
+        self.source = source
+        self.target = target
+        self.message = message
+        self.compileMilliseconds = compileMilliseconds
+        self.linkMilliseconds = linkMilliseconds
+    }
+}
+
+public struct InjectionEventsResult: Codable, Sendable {
+    public let events: [InjectionEvent]
+
+    public init(events: [InjectionEvent]) {
+        self.events = events
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -391,6 +432,7 @@ public struct ControlResponse: Codable, Sendable {
     public let logs: LogsResult?
     public let operation: OperationResult?
     public let lastError: LastErrorResult?
+    public let events: InjectionEventsResult?
     public let error: ControlError?
 
     public init(
@@ -406,6 +448,7 @@ public struct ControlResponse: Codable, Sendable {
         logs: LogsResult? = nil,
         operation: OperationResult? = nil,
         lastError: LastErrorResult? = nil,
+        events: InjectionEventsResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -420,6 +463,7 @@ public struct ControlResponse: Codable, Sendable {
         self.logs = logs
         self.operation = operation
         self.lastError = lastError
+        self.events = events
         self.error = error
     }
 
@@ -531,6 +575,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             lastError: result
+        )
+    }
+
+    public static func events(
+        id: String,
+        result: InjectionEventsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            events: result
         )
     }
 
