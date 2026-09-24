@@ -520,6 +520,82 @@ public final class ControlRouter {
                 )
             }
 
+        case .xprobeSearch:
+            switch backend.xprobeSearch(
+                pattern: request.filter
+            ) {
+            case .success(let result):
+                return .xprobe(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .xprobeInspect:
+            guard let objectID = request.objectID else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_OBJECT_ID",
+                    message: "xprobe_inspect requires objectID."
+                )
+            }
+
+            switch backend.xprobeInspect(
+                objectID: objectID
+            ) {
+            case .success(let result):
+                return .xprobe(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .eval:
+            guard let objectID = request.objectID else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_OBJECT_ID",
+                    message: "eval requires objectID."
+                )
+            }
+            guard let code = request.payload,
+                  !code.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_CODE",
+                    message: "eval requires non-empty code."
+                )
+            }
+
+            switch backend.eval(
+                objectID: objectID,
+                code: code
+            ) {
+            case .success(let result):
+                return .eval(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .traceStop:
             switch backend.traceStop() {
             case .success(let result):
