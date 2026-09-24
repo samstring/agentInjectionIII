@@ -213,6 +213,42 @@ if [ "$XCODE_STATUS" != "0" ]; then
   exit "$XCODE_STATUS"
 fi
 
+echo "==> Seed captured Swift frontend commands from xcodebuild output"
+FRONTEND_LOG="$HOME/.agentInjectionIII/cache/frontend-commands.log"
+mkdir -p "$(dirname "$FRONTEND_LOG")"
+python3 - "$BUILD_LOG" "$FRONTEND_LOG" "$SMOKE_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+build_log = Path(sys.argv[1])
+frontend_log = Path(sys.argv[2])
+working_directory = sys.argv[3]
+
+commands = []
+for raw in build_log.read_text(errors="replace").splitlines():
+    line = raw.strip()
+    if "swift-frontend" not in line:
+        continue
+    if " -frontend " not in line or " -c " not in line:
+        continue
+    if "SmokeViewController.swift" not in line:
+        continue
+    start = line.find("/")
+    if start < 0:
+        continue
+    command = line[start:]
+    commands.append(f"{working_directory}\t{command}")
+
+if not commands:
+    raise SystemExit(
+        "No Swift frontend compile command for SmokeViewController.swift "
+        "was found in xcodebuild output."
+    )
+
+frontend_log.write_text("\n".join(commands) + "\n")
+print(f"Captured {len(commands)} Swift frontend command(s) -> {frontend_log}")
+PY
+
 APP="$DERIVED/Build/Products/Debug-iphonesimulator/SimulatorSmokeApp.app"
 if [ ! -d "$APP" ]; then
   echo "Built app not found: $APP" >&2
