@@ -298,6 +298,17 @@ static BOOL AgentTraceOutputInstalled = NO;
 }
 
 + (BOOL)installXCTestObserverIfAvailable {
+    // XCTestObservationCenter enforces main-thread registration.
+    // The trace bridge connects from a utility queue, so centralize the
+    // thread hop here instead of relying on every caller to remember it.
+    if (![NSThread isMainThread]) {
+        __block BOOL installed = NO;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            installed = [self installXCTestObserverIfAvailable];
+        });
+        return installed;
+    }
+
     @synchronized (self) {
         if (AgentXCTestObserverInstalled) {
             return YES;
