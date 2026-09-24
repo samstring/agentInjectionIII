@@ -13,10 +13,16 @@ public struct BackendInjectionResponse: Sendable {
 public protocol InjectionBackend: AnyObject {
     var name: String { get }
     func status() -> BackendStatus
-    func inject(files: [String]) -> BackendInjectionResponse
-    func loadDylib(path: String) -> BackendInjectionResponse
+    func targets() -> TargetsResult
+    func inject(files: [String], target: String?) -> BackendInjectionResponse
+    func loadDylib(path: String, target: String?) -> BackendInjectionResponse
     func doctor(path: String?) -> DoctorReport
-    func screenshot(path: String?) -> Result<ScreenshotResult, ControlError>
+    func screenshot(path: String?, target: String?) -> Result<ScreenshotResult, ControlError>
+    func touchCapture(target: String?) -> Result<TouchResult, ControlError>
+    func touchRead(target: String?) -> Result<TouchResult, ControlError>
+    func touchReplay(payload: String, target: String?) -> Result<TouchResult, ControlError>
+    func logs(since: Double?, limit: Int?) -> LogsResult
+    func clearLogs() -> LogsResult
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
@@ -48,7 +54,14 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
         )
     }
 
-    public func inject(files: [String]) -> BackendInjectionResponse {
+    public func targets() -> TargetsResult {
+        TargetsResult(targets: [])
+    }
+
+    public func inject(
+        files: [String],
+        target: String?
+    ) -> BackendInjectionResponse {
         let normalized = files.map { normalize(path: $0) }
         let results = normalized.map { file in
             InjectionResult(
@@ -68,7 +81,10 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
         )
     }
 
-    public func loadDylib(path: String) -> BackendInjectionResponse {
+    public func loadDylib(
+        path: String,
+        target: String?
+    ) -> BackendInjectionResponse {
         let normalized = normalize(path: path)
         return BackendInjectionResponse(
             results: [
@@ -100,7 +116,8 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
     }
 
     public func screenshot(
-        path: String?
+        path: String?,
+        target: String?
     ) -> Result<ScreenshotResult, ControlError> {
         .failure(
             ControlError(
@@ -108,6 +125,51 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                 message: "Scaffold backend has no connected app runtime."
             )
         )
+    }
+
+    public func touchCapture(
+        target: String?
+    ) -> Result<TouchResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "RUNTIME_NOT_READY",
+                message: "Scaffold backend has no touch-capable runtime."
+            )
+        )
+    }
+
+    public func touchRead(
+        target: String?
+    ) -> Result<TouchResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "RUNTIME_NOT_READY",
+                message: "Scaffold backend has no touch-capable runtime."
+            )
+        )
+    }
+
+    public func touchReplay(
+        payload: String,
+        target: String?
+    ) -> Result<TouchResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "RUNTIME_NOT_READY",
+                message: "Scaffold backend has no touch-capable runtime."
+            )
+        )
+    }
+
+    public func logs(
+        since: Double?,
+        limit: Int?
+    ) -> LogsResult {
+        LogsResult(entries: [])
+    }
+
+    public func clearLogs() -> LogsResult {
+        LogsResult(entries: [])
     }
 
     public func traceStart(
