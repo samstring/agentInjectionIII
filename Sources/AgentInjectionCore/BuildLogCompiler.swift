@@ -482,6 +482,10 @@ public final class BuildLogCompiler {
             "-fobjc-arc"
         ]
 
+        if let sdkRoot = sdkPath(for: sdk) {
+            arguments += ["-isysroot", sdkRoot]
+        }
+
         if let target = firstRegexCapture(
             #" -target ([^\s]+)"#,
             in: compileCommand
@@ -502,6 +506,17 @@ public final class BuildLogCompiler {
 
         arguments += [object, "-o", dylib]
         return arguments
+    }
+
+    private func sdkPath(for sdk: String) -> String? {
+        let result = Shell.run(
+            executable: "/usr/bin/xcrun",
+            arguments: ["--sdk", sdk, "--show-sdk-path"]
+        )
+        guard result.status == 0 else { return nil }
+        let path = result.stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
     }
 
     private func xcodeDeveloperDirectory() -> String? {
