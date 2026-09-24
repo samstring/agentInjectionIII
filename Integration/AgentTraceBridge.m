@@ -18,6 +18,9 @@ typedef void (^AgentSwiftTraceOutput)(
 @interface AgentTraceBridge ()
 + (void)sendJSONObject:(NSDictionary *)object;
 + (BOOL)installXCTestObserverIfAvailable;
++ (NSArray * _Nullable)xprobePathsIfAvailable;
++ (NSDictionary * _Nullable)xprobeObjectAtIndex:(NSUInteger)index
+                                           paths:(NSArray *)paths;
 @end
 
 @interface AgentInjectedTestObserver : NSObject
@@ -387,6 +390,121 @@ static BOOL AgentTraceOutputInstalled = NO;
     AgentTraceOutputInstalled = YES;
 }
 
++ (NSArray * _Nullable)xprobePathsIfAvailable {
+    void *symbol = dlsym(
+        RTLD_DEFAULT,
+        "xprobePaths"
+    );
+
+    // Xprobe is implemented as Objective-C++ in upstream builds, where the
+    // global may be emitted with a C++-mangled name.
+    if (!symbol) {
+        symbol = dlsym(
+            RTLD_DEFAULT,
+            "_Z11xprobePaths"
+        );
+    }
+
+    if (!symbol) {
+        return nil;
+    }
+
+    id __unsafe_unretained *slot =
+        (id __unsafe_unretained *)symbol;
+    id value = *slot;
+
+    return [value isKindOfClass:NSArray.class]
+        ? value
+        : nil;
+}
+
++ (NSDictionary * _Nullable)xprobeObjectAtIndex:(NSUInteger)index
+                                           paths:(NSArray *)paths {
+    if (index >= paths.count) {
+        return nil;
+    }
+
+    id path = paths[index];
+    SEL objectSelector =
+        NSSelectorFromString(@"object");
+    SEL classSelector =
+        NSSelectorFromString(@"aClass");
+    SEL pathSelector =
+        NSSelectorFromString(@"xpath");
+
+    if (![path respondsToSelector:objectSelector]) {
+        return nil;
+    }
+
+    typedef id (*ObjectSend)(id, SEL);
+    id object =
+        ((ObjectSend)objc_msgSend)(
+            path,
+            objectSelector
+        );
+
+    Class aClass = Nil;
+    if ([path respondsToSelector:classSelector]) {
+        aClass =
+            ((Class (*)(id, SEL))objc_msgSend)(
+                path,
+                classSelector
+            );
+    }
+
+    NSString *pathString = nil;
+    if ([path respondsToSelector:pathSelector]) {
+        id value =
+            ((ObjectSend)objc_msgSend)(
+                path,
+                pathSelector
+            );
+        if ([value isKindOfClass:NSString.class]) {
+            pathString = value;
+        }
+    }
+
+    NSString *className = nil;
+    if (object) {
+        className = NSStringFromClass(
+            [object class]
+        );
+    } else if (aClass) {
+        className = NSStringFromClass(
+            aClass
+        );
+    }
+    if (className.length == 0) {
+        className = @"(unknown)";
+    }
+
+    NSString *description = nil;
+    @try {
+        description = [object description];
+    } @catch (__unused NSException *exception) {
+    }
+    if (description.length == 0) {
+        description = className;
+    }
+    if (description.length > 2000) {
+        description = [[description
+            substringToIndex:2000]
+            stringByAppendingString:@"…"];
+    }
+
+    NSMutableDictionary *result = [@{
+        @"id": @(index),
+        @"className": className,
+        @"description": description
+    } mutableCopy];
+
+    if (pathString.length > 0) {
+        result[@"path"] = pathString;
+    }
+
+    return result;
+}
+
 + (void)readCommandLoop:(int)socketFD {
     NSMutableData *buffer = [NSMutableData data];
     uint8_t chunk[4096];
@@ -449,6 +567,270 @@ static BOOL AgentTraceOutputInstalled = NO;
 
 + (void)handleCommand:(NSDictionary *)command {
     NSString *action = command[@"action"];
+
+    if ([action isEqualToString:@"xprobe_search"]) {
+        NSString *pattern =
+            [command[@"filter"] isKindOfClass:NSString.class]
+            ? command[@"filter"]
+            : @"";
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            Class xprobe =
+                NSClassFromString(@"Xprobe");
+            SEL selector =
+                NSSelectorFromString(@"_search:");
+
+            if (!xprobe ||
+                ![xprobe respondsToSelector:selector]) {
+                [self sendJSONObject:@{
+                    @"type": @"xprobe_result",
+                    @"available": @NO,
+                    @"error": @"Xprobe is not linked into this app runtime.",
+                    @"objects": @[]
+                }];
+                return;
+            }
+
+            typedef void (*SearchSend)(
+                id,
+                SEL,
+                id
+            );
+            ((SearchSend)objc_msgSend)(
+                xprobe,
+                selector,
+                pattern ?: @""
+            );
+
+            NSArray *paths =
+                [self xprobePathsIfAvailable];
+            if (!paths) {
+                [self sendJSONObject:@{
+                    @"type": @"xprobe_result",
+                    @"available": @NO,
+                    @"error": @"Xprobe path table is unavailable in this runtime.",
+                    @"objects": @[]
+                }];
+                return;
+            }
+
+            NSRegularExpression *regex = nil;
+            if (pattern.length > 0) {
+                regex = [NSRegularExpression
+                    regularExpressionWithPattern:pattern
+                    options:NSRegularExpressionCaseInsensitive
+                    error:NULL];
+            }
+
+            NSMutableArray *objects =
+                [NSMutableArray array];
+
+            for (NSUInteger index = 0;
+                 index < paths.count &&
+                 objects.count < 500;
+                 index++) {
+                NSDictionary *object =
+                    [self xprobeObjectAtIndex:index
+                                        paths:paths];
+                if (!object) {
+                    continue;
+                }
+
+                if (pattern.length > 0) {
+                    NSString *haystack =
+                        [NSString stringWithFormat:
+                            @"%@ %@ %@",
+                            object[@"className"] ?: @"",
+                            object[@"path"] ?: @"",
+                            object[@"description"] ?: @""
+                        ];
+
+                    BOOL matches = regex
+                        ? [regex firstMatchInString:haystack
+                                           options:0
+                                             range:NSMakeRange(
+                                                 0,
+                                                 haystack.length
+                                             )] != nil
+                        : [haystack
+                            rangeOfString:pattern
+                            options:NSCaseInsensitiveSearch
+                          ].location != NSNotFound;
+
+                    if (!matches) {
+                        continue;
+                    }
+                }
+
+                [objects addObject:object];
+            }
+
+            [self sendJSONObject:@{
+                @"type": @"xprobe_result",
+                @"timestamp":
+                    @([NSDate timeIntervalSinceReferenceDate]),
+                @"available": @YES,
+                @"objects": objects
+            }];
+        });
+        return;
+    }
+
+    if ([action isEqualToString:@"xprobe_inspect"]) {
+        NSNumber *objectID =
+            [command[@"objectID"] isKindOfClass:NSNumber.class]
+            ? command[@"objectID"]
+            : nil;
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSArray *paths =
+                [self xprobePathsIfAvailable];
+
+            if (!paths) {
+                [self sendJSONObject:@{
+                    @"type": @"xprobe_result",
+                    @"available": @NO,
+                    @"error": @"Xprobe is not linked or no Xprobe search has been performed.",
+                    @"objects": @[]
+                }];
+                return;
+            }
+
+            NSInteger index =
+                objectID.integerValue;
+            if (!objectID ||
+                index < 0 ||
+                (NSUInteger)index >= paths.count) {
+                [self sendJSONObject:@{
+                    @"type": @"xprobe_result",
+                    @"available": @YES,
+                    @"error": @"Xprobe object ID is out of range.",
+                    @"objects": @[]
+                }];
+                return;
+            }
+
+            NSDictionary *selected =
+                [self xprobeObjectAtIndex:
+                    (NSUInteger)index
+                    paths:paths];
+
+            [self sendJSONObject:@{
+                @"type": @"xprobe_result",
+                @"timestamp":
+                    @([NSDate timeIntervalSinceReferenceDate]),
+                @"available": @YES,
+                @"objects": @[],
+                @"selected":
+                    selected ?: @{},
+                @"details":
+                    selected[@"description"]
+                        ?: @""
+            }];
+        });
+        return;
+    }
+
+    if ([action isEqualToString:@"eval"]) {
+        NSNumber *objectID =
+            [command[@"objectID"] isKindOfClass:NSNumber.class]
+            ? command[@"objectID"]
+            : nil;
+        NSString *code =
+            [command[@"code"] isKindOfClass:NSString.class]
+            ? command[@"code"]
+            : nil;
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSArray *paths =
+                [self xprobePathsIfAvailable];
+
+            if (!paths) {
+                [self sendJSONObject:@{
+                    @"type": @"eval_result",
+                    @"available": @NO,
+                    @"objectID":
+                        objectID ?: @(-1),
+                    @"succeeded": @NO,
+                    @"error": @"Xprobe is not linked or no Xprobe search has been performed."
+                }];
+                return;
+            }
+
+            NSInteger index =
+                objectID.integerValue;
+            if (!objectID ||
+                index < 0 ||
+                (NSUInteger)index >= paths.count ||
+                code.length == 0) {
+                [self sendJSONObject:@{
+                    @"type": @"eval_result",
+                    @"available": @YES,
+                    @"objectID":
+                        objectID ?: @(-1),
+                    @"succeeded": @NO,
+                    @"error": @"Invalid Xprobe object ID or empty Eval code."
+                }];
+                return;
+            }
+
+            id path = paths[
+                (NSUInteger)index
+            ];
+            SEL objectSelector =
+                NSSelectorFromString(@"object");
+            typedef id (*ObjectSend)(id, SEL);
+            id object =
+                [path respondsToSelector:objectSelector]
+                ? ((ObjectSend)objc_msgSend)(
+                    path,
+                    objectSelector
+                  )
+                : nil;
+
+            SEL evalSelector =
+                NSSelectorFromString(
+                    @"swiftEvalWithCode:"
+                );
+
+            if (!object ||
+                ![object respondsToSelector:evalSelector]) {
+                [self sendJSONObject:@{
+                    @"type": @"eval_result",
+                    @"available": @YES,
+                    @"objectID": @(index),
+                    @"succeeded": @NO,
+                    @"error": @"Selected object does not expose swiftEvalWithCode:. Ensure HotReloading/SwiftEval is linked and the source file matches the class name."
+                }];
+                return;
+            }
+
+            typedef BOOL (*EvalSend)(
+                id,
+                SEL,
+                id
+            );
+            BOOL succeeded =
+                ((EvalSend)objc_msgSend)(
+                    object,
+                    evalSelector,
+                    code
+                );
+
+            [self sendJSONObject:@{
+                @"type": @"eval_result",
+                @"timestamp":
+                    @([NSDate timeIntervalSinceReferenceDate]),
+                @"available": @YES,
+                @"objectID": @(index),
+                @"succeeded": @(succeeded),
+                @"error": succeeded
+                    ? (id)NSNull.null
+                    : @"Swift Eval returned false."
+            }];
+        });
+        return;
+    }
 
     if ([action isEqualToString:@"trace_scope"]) {
         id rawFilter = command[@"filter"];
