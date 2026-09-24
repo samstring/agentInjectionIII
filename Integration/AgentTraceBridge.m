@@ -14,6 +14,146 @@ typedef void (^AgentSwiftTraceOutput)(
     NSInteger indent
 );
 
+
+@interface AgentTraceBridge ()
++ (void)sendJSONObject:(NSDictionary *)object;
++ (BOOL)installXCTestObserverIfAvailable;
+@end
+
+@interface AgentInjectedTestObserver : NSObject
+@property(nonatomic, strong)
+    NSMutableDictionary<NSString *, NSMutableDictionary *> *states;
+@end
+
+@implementation AgentInjectedTestObserver
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _states = [NSMutableDictionary dictionary];
+    }
+    return self;
+}
+
+- (NSString *)nameForTest:(id)test {
+    @try {
+        id name = [test valueForKey:@"name"];
+        if ([name isKindOfClass:NSString.class] &&
+            [name length] != 0) {
+            return name;
+        }
+    } @catch (__unused NSException *exception) {
+    }
+    return NSStringFromClass([test class]);
+}
+
+- (NSMutableDictionary *)stateForTest:(id)test
+                               create:(BOOL)create {
+    NSString *name = [self nameForTest:test];
+    NSMutableDictionary *state = self.states[name];
+    if (!state && create) {
+        state = [@{
+            @"started":
+                @([NSDate timeIntervalSinceReferenceDate]),
+            @"messages":
+                [NSMutableArray array]
+        } mutableCopy];
+        self.states[name] = state;
+    }
+    return state;
+}
+
+- (void)testCaseWillStart:(id)testCase {
+    @synchronized (self) {
+        [self stateForTest:testCase create:YES];
+    }
+}
+
+- (void)recordFailureForTest:(id)testCase
+                     message:(NSString *)message {
+    if (message.length == 0) {
+        return;
+    }
+
+    @synchronized (self) {
+        NSMutableDictionary *state =
+            [self stateForTest:testCase create:YES];
+        NSMutableArray *messages = state[@"messages"];
+        if (![messages containsObject:message]) {
+            [messages addObject:message];
+        }
+    }
+}
+
+- (void)testCase:(id)testCase
+didFailWithDescription:(NSString *)description
+          inFile:(NSString *)filePath
+          atLine:(NSUInteger)line {
+    NSString *message = description ?: @"XCTest failure";
+    if (filePath.length != 0) {
+        message = [NSString stringWithFormat:
+            @"%@ (%@:%lu)",
+            message,
+            filePath,
+            (unsigned long)line
+        ];
+    }
+    [self recordFailureForTest:testCase
+                       message:message];
+}
+
+- (void)testCase:(id)testCase
+  didRecordIssue:(id)issue {
+    NSString *message = nil;
+    @try {
+        id compact = [issue valueForKey:@"compactDescription"];
+        if ([compact isKindOfClass:NSString.class]) {
+            message = compact;
+        }
+    } @catch (__unused NSException *exception) {
+    }
+
+    if (message.length == 0) {
+        message = [issue description]
+            ?: @"XCTest issue";
+    }
+
+    [self recordFailureForTest:testCase
+                       message:message];
+}
+
+- (void)testCaseDidFinish:(id)testCase {
+    NSString *name = [self nameForTest:testCase];
+    NSTimeInterval now =
+        [NSDate timeIntervalSinceReferenceDate];
+
+    NSMutableDictionary *state = nil;
+    @synchronized (self) {
+        state = self.states[name];
+        [self.states removeObjectForKey:name];
+    }
+
+    NSNumber *started = state[@"started"];
+    NSArray *messages = state[@"messages"] ?: @[];
+    NSTimeInterval duration =
+        started ? now - started.doubleValue : 0;
+
+    [AgentTraceBridge sendJSONObject:@{
+        @"type": @"test_result",
+        @"timestamp": @(now),
+        @"testName": name ?: @"(unknown test)",
+        @"passed": @(messages.count == 0),
+        @"failures": @(messages.count),
+        @"durationSeconds": @(duration),
+        @"messages": messages
+    }];
+}
+
+@end
+
+static AgentInjectedTestObserver *AgentXCTestObserver;
+static BOOL AgentXCTestObserverInstalled = NO;
+
 @implementation AgentTraceBridge
 
 static int AgentTraceSocket = -1;
@@ -70,6 +210,20 @@ static BOOL AgentTraceOutputInstalled = NO;
     AgentTraceSocket = socketFD;
 
     [self installSwiftTraceOutput];
+
+    dispatch_async(
+        dispatch_get_global_queue(QOS_CLASS_UTILITY, 0),
+        ^{
+            while (AgentTraceSocket >= 0 &&
+                   !AgentXCTestObserverInstalled) {
+                if ([self installXCTestObserverIfAvailable]) {
+                    break;
+                }
+                [NSThread sleepForTimeInterval:0.5];
+            }
+        }
+    );
+
     [self sendJSONObject:@{
         @"type": @"hello",
         @"timestamp": @([NSDate timeIntervalSinceReferenceDate])
