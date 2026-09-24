@@ -1292,7 +1292,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "objc++",
                 "xcode-build-log",
                 "screenshot",
-                "trace"
+                "trace",
+                "targets",
+                "device-injection",
+                "touch-capture",
+                "touch-replay",
+                "logs"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -1303,8 +1308,19 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
-    public func inject(files: [String]) -> BackendInjectionResponse {
-        let runtime = runtimeServer.status()
+    public func targets() -> TargetsResult {
+        TargetsResult(
+            targets: runtimeServer.targets()
+        )
+    }
+
+    public func inject(
+        files: [String],
+        target: String?
+    ) -> BackendInjectionResponse {
+        let runtime = runtimeServer.status(
+            target: target
+        )
 
         guard runtime.connected else {
             return BackendInjectionResponse(
@@ -1367,7 +1383,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
             case .success(let artifact):
                 let runtimeResult = runtimeServer.loadDylib(
-                    path: artifact.dylib
+                    path: artifact.dylib,
+                    target: target
                 )
                 compiler.remove(artifact)
 
@@ -1400,9 +1417,15 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
-    public func loadDylib(path: String) -> BackendInjectionResponse {
+    public func loadDylib(
+        path: String,
+        target: String?
+    ) -> BackendInjectionResponse {
         let normalized = normalize(path: path)
-        let result = runtimeServer.loadDylib(path: normalized)
+        let result = runtimeServer.loadDylib(
+            path: normalized,
+            target: target
+        )
 
         return BackendInjectionResponse(
             results: [result],
@@ -1416,9 +1439,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     }
 
     public func screenshot(
-        path: String?
+        path: String?,
+        target: String?
     ) -> Result<ScreenshotResult, ControlError> {
-        guard let captured = runtimeServer.requestScreenshot() else {
+        guard let captured = runtimeServer.requestScreenshot(
+            target: target
+        ) else {
             return .failure(
                 ControlError(
                     code: "SCREENSHOT_FAILED",
@@ -1467,6 +1493,46 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 byteCount: captured.data.count
             )
         )
+    }
+
+    public func touchCapture(
+        target: String?
+    ) -> Result<TouchResult, ControlError> {
+        runtimeServer.captureTouchEvents(
+            target: target
+        )
+    }
+
+    public func touchRead(
+        target: String?
+    ) -> Result<TouchResult, ControlError> {
+        runtimeServer.drainTouchEvents(
+            target: target
+        )
+    }
+
+    public func touchReplay(
+        payload: String,
+        target: String?
+    ) -> Result<TouchResult, ControlError> {
+        runtimeServer.replayTouchEvents(
+            payload,
+            target: target
+        )
+    }
+
+    public func logs(
+        since: Double?,
+        limit: Int?
+    ) -> LogsResult {
+        runtimeServer.logs(
+            since: since,
+            limit: limit
+        )
+    }
+
+    public func clearLogs() -> LogsResult {
+        runtimeServer.clearLogs()
     }
 
     public func traceStart(
