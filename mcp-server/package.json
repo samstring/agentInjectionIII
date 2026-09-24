@@ -1,0 +1,22 @@
+{
+  "name": "agent-injection-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for agent-first iOS hot injection through agentInjectionIII",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "agent-injection-mcp": "./index.js"
+  },
+  "engines": {
+    "node": ">=18.14.1"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js",
+    "test": "node --test socket-client.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.25.0"
+  }
+}
