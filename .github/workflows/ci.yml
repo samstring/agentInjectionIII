@@ -26,51 +26,28 @@ jobs:
         run: swift test
 
 
-  simulator-preflight:
+  simulator-smoke:
     needs: swift
     runs-on: macos-26
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show Xcode and simulator runtimes
+      - name: Show Xcode and CocoaPods environment
         run: |
           xcodebuild -version
           xcrun simctl list runtimes
-          xcrun simctl list devices available
+          pod --version || true
 
-      - name: Boot an available iPhone Simulator
+      - name: Run mixed ObjC Swift CocoaPods injection smoke
         shell: bash
-        run: |
-          set -euo pipefail
+        run: bash scripts/test-simulator-smoke.sh
 
-          UDID="$(
-            xcrun simctl list devices available -j |
-            python3 -c '
-            import json, sys
-            data = json.load(sys.stdin)
-            for devices in data.get("devices", {}).values():
-                for device in devices:
-                    if device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
-                        print(device["udid"])
-                        raise SystemExit(0)
-            raise SystemExit(1)
-            '
-          )"
-
-          if [ -z "$UDID" ]; then
-            echo "No available iPhone Simulator found." >&2
-            exit 1
-          fi
-
-          echo "Using simulator: $UDID"
-          xcrun simctl boot "$UDID" 2>/dev/null || true
-          xcrun simctl bootstatus "$UDID" -b
-          xcrun simctl getenv "$UDID" HOME
-          xcrun simctl shutdown "$UDID"
-
-      - name: Build agentInjectionIII
-        run: swift build
-
-      - name: Run unit tests
-        run: swift test
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-smoke
+          path: |
+            ${{ runner.temp }}/agentInjectionIII-smoke
+          if-no-files-found: ignore
