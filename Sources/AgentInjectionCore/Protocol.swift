@@ -426,6 +426,37 @@ public struct ProfileResult: Codable, Sendable {
     }
 }
 
+public struct CallOrderResult: Codable, Sendable {
+    public let signatures: [String]
+
+    public init(signatures: [String]) {
+        self.signatures = signatures
+    }
+}
+
+public struct InstanceCount: Codable, Sendable {
+    public let type: String
+    public let count: Int
+
+    public init(type: String, count: Int) {
+        self.type = type
+        self.count = count
+    }
+}
+
+public struct InstanceCountsResult: Codable, Sendable {
+    public let active: Bool
+    public let counts: [InstanceCount]
+
+    public init(
+        active: Bool,
+        counts: [InstanceCount]
+    ) {
+        self.active = active
+        self.counts = counts
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -684,6 +715,28 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             compilerState: result
+        )
+    }
+
+    public static func callOrder(
+        id: String,
+        result: CallOrderResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            callOrder: result
+        )
+    }
+
+    public static func instances(
+        id: String,
+        result: InstanceCountsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            instances: result
         )
     }
 
