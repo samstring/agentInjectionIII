@@ -27,11 +27,13 @@ public final class BuildLogCompiler {
     private struct CachedCommand: Codable {
         let command: String
         let logPath: String
+        let workingDirectory: String?
     }
 
     private let projectRoot: String?
     private let derivedDataRoot: String?
     private let cacheURL: URL
+    private let interceptionLogURL: URL
     private let fileManager = FileManager.default
     private let deviceTesting: Bool
     private let deviceLibraries: [String]
@@ -50,6 +52,7 @@ public final class BuildLogCompiler {
         projectRoot: String? = nil,
         derivedDataRoot: String? = nil,
         cacheRoot: String? = nil,
+        interceptionLogPath: String? = nil,
         xcodePath: String? = nil,
         deviceTesting: Bool = false,
         deviceLibraries: [String] = [
@@ -77,6 +80,9 @@ public final class BuildLogCompiler {
 
         self.cacheURL = root
             .appendingPathComponent("compile-commands.json")
+        self.interceptionLogURL = interceptionLogPath.map {
+            URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath)
+        } ?? root.appendingPathComponent("frontend-commands.log")
 
         if let data = try? Data(contentsOf: cacheURL),
            let cached = try? JSONDecoder().decode(
@@ -132,6 +138,7 @@ public final class BuildLogCompiler {
     public func knownSwiftSources(
         maximumLogs: Int = 12
     ) -> [String] {
+        ingestInterceptedCommands()
         var sources = Set<String>()
 
         cacheLock.lock()
@@ -233,6 +240,7 @@ public final class BuildLogCompiler {
         source: String? = nil,
         platform: String? = nil
     ) -> Diagnostics {
+        ingestInterceptedCommands()
         let logs = buildLogsNewestFirst()
         let root: String
         if let derivedDataRoot {
@@ -275,11 +283,138 @@ public final class BuildLogCompiler {
         )
     }
 
+    public func interceptionLogPath() -> String {
+        interceptionLogURL.path
+    }
+
+    public func interceptedCommandCount() -> Int {
+        ingestInterceptedCommands()
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return memoryCache.values.filter {
+            $0.logPath == interceptionLogURL.path
+        }.count
+    }
+
+    /// Imports compiler invocations captured by the patched swift-frontend
+    /// feeder. Each line is: shell-escaped PWD, a tab, then a shell-escaped
+    /// compiler command.
+    public func ingestInterceptedCommands() {
+        guard let contents = try? String(
+            contentsOf: interceptionLogURL,
+            encoding: .utf8
+        ), !contents.isEmpty else {
+            return
+        }
+
+        var captured: [(String, CachedCommand)] = []
+
+        for rawLine in contents.split(
+            separator: "\n",
+            omittingEmptySubsequences: true
+        ) {
+            let line = String(rawLine)
+            guard let tab = line.firstIndex(of: "\t") else {
+                continue
+            }
+
+            let rawWorkingDirectory = String(line[..<tab])
+            let command = String(line[line.index(after: tab)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard command.contains("swift-frontend"),
+                  command.contains(" -frontend "),
+                  command.contains(" -c ") else {
+                continue
+            }
+
+            let workingDirectory = decodeShellToken(rawWorkingDirectory)
+            let platform = interceptedPlatform(from: command)
+            let primaries = interceptedPrimaryFiles(from: command)
+
+            for source in primaries {
+                let normalized = standardized(source)
+                guard normalized.hasSuffix(".swift") else {
+                    continue
+                }
+
+                captured.append((
+                    normalized + "|" + platform,
+                    CachedCommand(
+                        command: command,
+                        logPath: interceptionLogURL.path,
+                        workingDirectory: workingDirectory.isEmpty
+                            ? projectRoot
+                            : workingDirectory
+                    )
+                ))
+            }
+        }
+
+        guard !captured.isEmpty else { return }
+
+        cacheLock.lock()
+        for (key, value) in captured {
+            memoryCache[key] = value
+        }
+        persistCacheLocked()
+        cacheLock.unlock()
+    }
+
+    private func interceptedPlatform(
+        from command: String
+    ) -> String {
+        if let captures = firstRegexCaptures(
+            #"/SDKs/([A-Za-z]+)[0-9.]*\.sdk"#,
+            in: command
+        ), let platform = captures.first {
+            return platform
+        }
+
+        if command.contains("-apple-ios") {
+            return command.contains("-simulator")
+                ? "iPhoneSimulator"
+                : "iPhoneOS"
+        }
+
+        return ""
+    }
+
+    private func interceptedPrimaryFiles(
+        from command: String
+    ) -> [String] {
+        guard let regex = try? NSRegularExpression(
+            pattern: " -primary-file (\(quotedArgumentRegex))"
+        ) else {
+            return []
+        }
+
+        let range = NSRange(
+            command.startIndex..<command.endIndex,
+            in: command
+        )
+
+        return regex.matches(in: command, range: range)
+            .compactMap { match in
+                guard match.numberOfRanges > 1,
+                      let tokenRange = Range(
+                        match.range(at: 1),
+                        in: command
+                      ) else {
+                    return nil
+                }
+                return decodeShellToken(
+                    String(command[tokenRange])
+                )
+            }
+    }
+
     public func compileAndLink(
         source: String,
         platform: String,
         arch: String
     ) -> Result<Artifact, ControlError> {
+        ingestInterceptedCommands()
         let source = standardized(source)
 
         guard fileManager.fileExists(atPath: source) else {
@@ -379,7 +514,7 @@ public final class BuildLogCompiler {
         var compileResult = Shell.run(
             executable: "/bin/zsh",
             arguments: ["-lc", compileCommand],
-            currentDirectory: projectRoot
+            currentDirectory: located.workingDirectory ?? projectRoot
         )
 
         if compileResult.status != 0,
@@ -387,7 +522,7 @@ public final class BuildLogCompiler {
             compileResult = Shell.run(
                 executable: "/bin/zsh",
                 arguments: ["-lc", compileCommand],
-                currentDirectory: projectRoot
+                currentDirectory: located.workingDirectory ?? projectRoot
             )
         }
 
@@ -568,10 +703,11 @@ public final class BuildLogCompiler {
             )
         }
 
-        guard let recovered = recoverFileList(
-            source: source,
-            activityLogPath: activityLogPath
-        ) else {
+        guard activityLogPath.hasSuffix(".xcactivitylog"),
+              let recovered = recoverFileList(
+                source: source,
+                activityLogPath: activityLogPath
+              ) else {
             return .failure(
                 ControlError(
                     code: "FILELIST_MISSING",
@@ -789,7 +925,8 @@ public final class BuildLogCompiler {
                 ) {
                     return CachedCommand(
                         command: command,
-                        logPath: logURL.path
+                        logPath: logURL.path,
+                        workingDirectory: projectRoot
                     )
                 }
             }
