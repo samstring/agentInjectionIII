@@ -23,6 +23,7 @@ public enum ControlAction: String, Codable, Sendable {
     case getLastError = "get_last_error"
     case events
     case clearEvents = "clear_events"
+    case profileSnapshot = "profile_snapshot"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -356,6 +357,38 @@ public struct InjectionEventsResult: Codable, Sendable {
     }
 }
 
+public struct ProfileStat: Codable, Sendable {
+    public let method: String
+    public let elapsedSeconds: Double
+    public let invocations: Int
+    public let averageMilliseconds: Double
+
+    public init(
+        method: String,
+        elapsedSeconds: Double,
+        invocations: Int,
+        averageMilliseconds: Double
+    ) {
+        self.method = method
+        self.elapsedSeconds = elapsedSeconds
+        self.invocations = invocations
+        self.averageMilliseconds = averageMilliseconds
+    }
+}
+
+public struct ProfileResult: Codable, Sendable {
+    public let connected: Bool
+    public let stats: [ProfileStat]
+
+    public init(
+        connected: Bool,
+        stats: [ProfileStat]
+    ) {
+        self.connected = connected
+        self.stats = stats
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -433,6 +466,7 @@ public struct ControlResponse: Codable, Sendable {
     public let operation: OperationResult?
     public let lastError: LastErrorResult?
     public let events: InjectionEventsResult?
+    public let profile: ProfileResult?
     public let error: ControlError?
 
     public init(
@@ -449,6 +483,7 @@ public struct ControlResponse: Codable, Sendable {
         operation: OperationResult? = nil,
         lastError: LastErrorResult? = nil,
         events: InjectionEventsResult? = nil,
+        profile: ProfileResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -464,6 +499,7 @@ public struct ControlResponse: Codable, Sendable {
         self.operation = operation
         self.lastError = lastError
         self.events = events
+        self.profile = profile
         self.error = error
     }
 
@@ -586,6 +622,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             events: result
+        )
+    }
+
+    public static func profile(
+        id: String,
+        result: ProfileResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            profile: result
         )
     }
 
