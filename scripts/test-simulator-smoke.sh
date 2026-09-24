@@ -111,19 +111,10 @@ json_assert_connected() {
 import json, sys
 
 text = open(sys.argv[1]).read()
-decoder = json.JSONDecoder()
-index = 0
-objects = []
-
-while index < len(text):
-    while index < len(text) and text[index].isspace():
-        index += 1
-    if index >= len(text):
-        break
-    obj, index = decoder.raw_decode(text, index)
-    objects.append(obj)
-
-data = objects[-1] if objects else {}
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
 connected = bool(
     data.get("ok")
     and data.get("status", {})
@@ -139,19 +130,10 @@ json_assert_injected() {
 import json, sys
 
 text = open(sys.argv[1]).read()
-decoder = json.JSONDecoder()
-index = 0
-objects = []
-
-while index < len(text):
-    while index < len(text) and text[index].isspace():
-        index += 1
-    if index >= len(text):
-        break
-    obj, index = decoder.raw_decode(text, index)
-    objects.append(obj)
-
-data = objects[-1] if objects else {}
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
 items = data.get("injections") or []
 ok = bool(
     data.get("ok")
