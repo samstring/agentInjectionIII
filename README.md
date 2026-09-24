@@ -106,6 +106,8 @@ Copy:
 ```text
 Integration/AgentInjectionBootstrap.h
 Integration/AgentInjectionBootstrap.m
+Integration/AgentTraceBridge.h
+Integration/AgentTraceBridge.m
 ```
 
 into the app target.
@@ -237,6 +239,48 @@ The daemon:
 8. waits for `injected` / `failed`,
 9. returns structured JSON to the agent.
 
+## Screenshot verification
+
+After the app runtime is connected:
+
+```bash
+swift run injectionctl screenshot /tmp/app.png
+```
+
+If the output path is omitted, the daemon writes a PNG under the system temporary directory and returns the generated path in JSON.
+
+## Method-call tracing
+
+The Agent trace bridge is enabled only when the embedded Agent runtime is loaded.
+
+Start tracing the main app bundle:
+
+```bash
+swift run injectionctl trace start
+```
+
+Optionally apply a SwiftTrace include filter:
+
+```bash
+swift run injectionctl trace start 'FeedViewController|FeedService'
+```
+
+After exercising the app, consume buffered method-call events:
+
+```bash
+swift run injectionctl trace read 200
+```
+
+Stop tracing:
+
+```bash
+swift run injectionctl trace stop
+```
+
+`trace read` is consuming: returned events are removed from the daemon buffer so an Agent can poll incrementally without re-reading old calls.
+
+The trace bridge uses a separate local TCP channel on `127.0.0.1:8888`. If a non-default daemon trace port is used, set the app scheme environment variable `AGENT_INJECTION_TRACE_PORT` to the same value.
+
 ## Low-level runtime test
 
 If you already have a compatible injection dylib, bypass source compilation:
@@ -345,7 +389,8 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - Bazel is not connected yet.
 - compiler commands are cached under `~/.agentInjectionIII/cache/compile-commands.json`; stale cached commands are invalidated and retried from recent build logs.
 - missing Swift `-filelist` and stale bridging-header PCH paths have first-pass recovery, but still need validation against real-world Xcode/CocoaPods variants.
-- trace / screenshot / touch APIs are not yet exposed through `injectionctl`.
+- screenshot and experimental SwiftTrace method streaming are exposed through `injectionctl`; touch record/replay is not connected yet.
+- trace streaming currently requires the DEBUG-only `AgentTraceBridge` files to be present in the app target and still needs end-to-end validation in a production CocoaPods app.
 - CI is configured, but GitHub-hosted macOS jobs on this private repository are currently failing before any workflow steps are reported, so CI has not yet verified the current Swift build.
 
 ## Roadmap
@@ -381,9 +426,10 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 
 - [ ] injection lifecycle events
 - [ ] structured compiler diagnostics
-- [ ] trace / untrace
-- [ ] method-call stream
-- [ ] screenshot
+- [x] trace start / read / stop control path
+- [x] SwiftTrace method-call side channel
+- [x] screenshot
+- [ ] validate trace + screenshot end-to-end in a real app
 - [ ] touch record/replay
 
 ### Phase 4 — devices / advanced build systems
