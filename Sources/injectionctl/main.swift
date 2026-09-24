@@ -59,6 +59,11 @@ private func printUsage() {
       injectionctl [--socket PATH] logs [LIMIT]
       injectionctl [--socket PATH] logs clear
       injectionctl [--socket PATH] unhide-symbols
+      injectionctl [--socket PATH] prepare-swiftui-source FILE.swift
+      injectionctl [--socket PATH] prepare-swiftui-project
+      injectionctl [--socket PATH] set-xcode-path /Applications/Xcode.app
+      injectionctl [--socket PATH] launch-xcode
+      injectionctl [--socket PATH] last-error
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace read [LIMIT]
       injectionctl [--socket PATH] trace stop
@@ -250,6 +255,52 @@ case "unhide-symbols":
     }
     request = ControlRequest(
         action: .unhideSymbols
+    )
+
+case "prepare-swiftui-source":
+    guard options.arguments.count == 2 else {
+        fatalUsage("prepare-swiftui-source requires one Swift file.")
+    }
+    request = ControlRequest(
+        action: .prepareSwiftUISource,
+        path: absolutePath(
+            options.arguments[1]
+        )
+    )
+
+case "prepare-swiftui-project":
+    guard options.arguments.count == 1 else {
+        fatalUsage("prepare-swiftui-project does not accept arguments.")
+    }
+    request = ControlRequest(
+        action: .prepareSwiftUIProject
+    )
+
+case "set-xcode-path":
+    guard options.arguments.count == 2 else {
+        fatalUsage("set-xcode-path requires an Xcode.app path.")
+    }
+    request = ControlRequest(
+        action: .setXcodePath,
+        path: absolutePath(
+            options.arguments[1]
+        )
+    )
+
+case "launch-xcode":
+    guard options.arguments.count == 1 else {
+        fatalUsage("launch-xcode does not accept arguments.")
+    }
+    request = ControlRequest(
+        action: .launchXcode
+    )
+
+case "last-error":
+    guard options.arguments.count == 1 else {
+        fatalUsage("last-error does not accept arguments.")
+    }
+    request = ControlRequest(
+        action: .getLastError
     )
 
 case "trace":
