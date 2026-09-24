@@ -36,3 +36,21 @@ recompilation strategy in `BuildLogCompiler.swift` is derived conceptually
 from InjectionLite's `LogParser.swift` / `Recompiler.swift`; this repository
 keeps the attribution above and intentionally implements only the headless
 subset needed by agentInjectionIII.
+
+
+## SwiftTrace
+
+Repository: https://github.com/johnno1962/SwiftTrace
+
+Copyright (c) 2015 John Holdsworth
+
+SwiftTrace is distributed under an MIT-style license. agentInjectionIII does
+not vendor SwiftTrace source code directly; the locally built InjectionNext
+runtime contains it as an upstream dependency, and the DEBUG-only
+`AgentTraceBridge` interacts with its Objective-C-visible tracing API and
+`logOutput` callback.
+
+The upstream license also notes incorporated/related code from
+Oliver Letterer's `imp_implementationForwardingToSelector` project and
+Facebook's `fishhook`; their source/header licensing remains applicable in
+the upstream runtime.
