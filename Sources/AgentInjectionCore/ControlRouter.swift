@@ -488,6 +488,20 @@ public final class ControlRouter {
                 )
             }
 
+        case .testResults:
+            return .tests(
+                id: request.id,
+                result: backend.testResults(
+                    limit: request.limit
+                )
+            )
+
+        case .clearTestResults:
+            return .tests(
+                id: request.id,
+                result: backend.clearTestResults()
+            )
+
         case .traceStop:
             switch backend.traceStop() {
             case .success(let result):
