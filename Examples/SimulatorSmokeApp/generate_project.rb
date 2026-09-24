@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 require 'xcodeproj'
+require 'fileutils'
 
 root = File.expand_path(__dir__)
 project_path = File.join(root, 'SimulatorSmokeApp.xcodeproj')
