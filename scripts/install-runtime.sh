@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 UPSTREAM_REPO="${AGENT_INJECTION_UPSTREAM:-https://github.com/johnno1962/InjectionNext.git}"
 UPSTREAM_REF="${AGENT_INJECTION_UPSTREAM_REF:-39eef8a203b5093a8fbb7334d3a59f03624d2c01}"
 ROOT="${AGENT_INJECTION_HOME:-$HOME/.agentInjectionIII}"
@@ -19,6 +22,12 @@ fi
 git -C "$SRC" fetch origin "$UPSTREAM_REF"
 git -C "$SRC" checkout -f FETCH_HEAD
 git -C "$SRC" submodule update --init --recursive
+
+# Compile the Agent-only Swift introspection bridge into the locally built
+# InjectionNext runtime. This keeps SwiftTrace lifetime/call-order APIs out of
+# the user's application target while making them available over ObjC runtime.
+cp "$REPO_ROOT/Runtime/AgentInjectionRuntimeBridge.swift" \
+   "$SRC/Sources/InjectionNext/AgentInjectionRuntimeBridge.swift"
 
 rm -rf "$BUILD"
 
