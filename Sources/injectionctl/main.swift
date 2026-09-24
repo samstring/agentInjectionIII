@@ -78,6 +78,9 @@ private func printUsage() {
       injectionctl [--socket PATH] tests clear
       injectionctl [--socket PATH] reorder-project preview [PROJECT.xcodeproj]
       injectionctl [--socket PATH] reorder-project apply [PROJECT.xcodeproj]
+      injectionctl [--socket PATH] xprobe search [PATTERN]
+      injectionctl [--socket PATH] xprobe inspect OBJECT_ID
+      injectionctl [--socket PATH] eval OBJECT_ID CODE
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope frameworks [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope uikit [FILTER_REGEX]
@@ -507,6 +510,59 @@ case "reorder-project":
             ? absolutePath(options.arguments[2])
             : nil,
         enabled: mode == "apply"
+    )
+
+case "xprobe":
+    guard options.arguments.count >= 2 else {
+        fatalUsage("xprobe requires search or inspect.")
+    }
+
+    switch options.arguments[1] {
+    case "search":
+        guard options.arguments.count <= 3 else {
+            fatalUsage("xprobe search accepts at most one PATTERN.")
+        }
+        request = ControlRequest(
+            action: .xprobeSearch,
+            filter: options.arguments.count == 3
+                ? options.arguments[2]
+                : nil
+        )
+
+    case "inspect":
+        guard options.arguments.count == 3,
+              let objectID = Int(options.arguments[2]),
+              objectID >= 0 else {
+            fatalUsage("xprobe inspect requires a non-negative OBJECT_ID.")
+        }
+        request = ControlRequest(
+            action: .xprobeInspect,
+            objectID: objectID
+        )
+
+    default:
+        fatalUsage("xprobe requires search or inspect.")
+    }
+
+case "eval":
+    guard options.arguments.count >= 3,
+          let objectID = Int(options.arguments[1]),
+          objectID >= 0 else {
+        fatalUsage("eval requires OBJECT_ID and CODE.")
+    }
+
+    let code = options.arguments
+        .dropFirst(2)
+        .joined(separator: " ")
+
+    guard !code.isEmpty else {
+        fatalUsage("eval requires non-empty CODE.")
+    }
+
+    request = ControlRequest(
+        action: .eval,
+        payload: code,
+        objectID: objectID
     )
 
 case "trace":
