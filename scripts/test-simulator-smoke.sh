@@ -19,12 +19,16 @@ SCREENSHOT_PNG="$ARTIFACTS/after.png"
 TOUCH_CAPTURE_JSON="$ARTIFACTS/touch-capture.json"
 TOUCH_EVENTS_JSON="$ARTIFACTS/touch-events.json"
 TOUCH_REPLAY_JSON="$ARTIFACTS/touch-replay.json"
+TRACE_START_JSON="$ARTIFACTS/trace-start.json"
+TRACE_READ_JSON="$ARTIFACTS/trace-read.json"
+TRACE_STOP_JSON="$ARTIFACTS/trace-stop.json"
 
 mkdir -p "$ARTIFACTS"
 rm -rf "$DERIVED"
 rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" \
   "$STATUS_JSON" "$INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
-  "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON"
+  "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON" \
+  "$TRACE_START_JSON" "$TRACE_READ_JSON" "$TRACE_STOP_JSON"
 
 DAEMON_PID=""
 UDID="${SMOKE_UDID:-}"
@@ -472,6 +476,88 @@ PY
 echo "==> Verify replayed touch reached the live UIButton"
 wait_for_marker "TOUCHED" "$TOUCH_MARKER"
 
+echo "==> Start AgentTraceBridge method tracing"
+"$CTL" --socket "$SOCKET" trace start 'SmokeViewController|tracePulse' |
+  tee "$TRACE_START_JSON"
+
+python3 - "$TRACE_START_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+trace = data.get("trace") or {}
+ok = bool(
+    data.get("ok")
+    and trace.get("connected")
+    and trace.get("active")
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
+echo "==> Wait for live tracePulse method-call event"
+trace_seen=0
+for _ in $(seq 1 80); do
+  "$CTL" --socket "$SOCKET" trace read 200 > "$TRACE_READ_JSON" 2>/dev/null || true
+
+  if python3 - "$TRACE_READ_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+events = (data.get("trace") or {}).get("events") or []
+matched = any(
+    "tracePulse" in (event.get("text") or "")
+    or "SmokeViewController" in (event.get("text") or "")
+    for event in events
+)
+raise SystemExit(0 if data.get("ok") and matched else 1)
+PY
+  then
+    trace_seen=1
+    break
+  fi
+
+  sleep 0.25
+done
+
+if [ "$trace_seen" != "1" ]; then
+  echo "No SmokeViewController trace event was observed." >&2
+  cat "$TRACE_READ_JSON" >&2 2>/dev/null || true
+  cat "$DAEMON_LOG" >&2 2>/dev/null || true
+  exit 1
+fi
+
+echo "==> Stop AgentTraceBridge method tracing"
+"$CTL" --socket "$SOCKET" trace stop |
+  tee "$TRACE_STOP_JSON"
+
+python3 - "$TRACE_STOP_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+trace = data.get("trace") or {}
+ok = bool(
+    data.get("ok")
+    and trace.get("connected")
+    and not trace.get("active")
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
 echo
 echo "Simulator smoke test passed:"
 echo "  mixed ObjC + Swift: yes"
@@ -481,3 +567,4 @@ echo "  Swift injection BEFORE -> AFTER: yes"
 echo "  screenshot: $SCREENSHOT_PNG"
 echo "  touch capture command: yes"
 echo "  touch replay -> UIButton action: yes"
+echo "  AgentTraceBridge live method trace: yes"
