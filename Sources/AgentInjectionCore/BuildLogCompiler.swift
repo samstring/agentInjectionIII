@@ -320,6 +320,59 @@ public final class BuildLogCompiler {
         )
     }
 
+    public func codesign(
+        _ artifact: Artifact,
+        identity: String
+    ) -> Result<Void, ControlError> {
+        let identity = identity.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+
+        guard !identity.isEmpty else {
+            return .failure(
+                ControlError(
+                    code: "CODESIGN_IDENTITY_REQUIRED",
+                    message: "A code-signing identity is required for physical-device injection."
+                )
+            )
+        }
+
+        var environment: [String: String] = [:]
+        if let developer = xcodeDeveloperDirectory() {
+            environment["CODESIGN_ALLOCATE"] =
+                developer +
+                "/Toolchains/XcodeDefault.xctoolchain/usr/bin/codesign_allocate"
+        }
+
+        let result = Shell.run(
+            executable: "/usr/bin/codesign",
+            arguments: [
+                "--force",
+                "--sign", identity,
+                "--timestamp=none",
+                artifact.dylib
+            ],
+            currentDirectory: projectRoot,
+            environment: environment
+        )
+
+        guard result.status == 0 else {
+            return .failure(
+                ControlError(
+                    code: "CODESIGN_FAILED",
+                    message: """
+                    Failed to codesign injection dylib with identity (identity).
+
+                    Output:
+                    (result.combinedOutput)
+                    """
+                )
+            )
+        }
+
+        return .success(())
+    }
+
     public func remove(_ artifact: Artifact) {
         try? fileManager.removeItem(atPath: artifact.object)
         try? fileManager.removeItem(atPath: artifact.dylib)
@@ -1116,7 +1169,8 @@ private enum Shell {
     static func run(
         executable: String,
         arguments: [String],
-        currentDirectory: String? = nil
+        currentDirectory: String? = nil,
+        environment: [String: String] = [:]
     ) -> ShellResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -1126,6 +1180,12 @@ private enum Shell {
             process.currentDirectoryURL = URL(
                 fileURLWithPath: currentDirectory
             )
+        }
+
+        if !environment.isEmpty {
+            process.environment =
+                ProcessInfo.processInfo.environment
+                .merging(environment) { _, new in new }
         }
 
         let tmp = FileManager.default.temporaryDirectory
