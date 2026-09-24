@@ -44,6 +44,10 @@ let package = Package(
                     package: "InjectionLite"
                 ),
                 .product(
+                    name: "InjectionBazel",
+                    package: "InjectionLite"
+                ),
+                .product(
                     name: "SwiftRegexD",
                     package: "SwiftRegex5"
                 )
