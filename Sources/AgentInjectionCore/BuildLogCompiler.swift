@@ -33,6 +33,8 @@ public final class BuildLogCompiler {
     private let derivedDataRoot: String?
     private let cacheURL: URL
     private let fileManager = FileManager.default
+    private let settingsLock = NSLock()
+    private var selectedXcodePath: String?
     private let cacheLock = NSLock()
     private var memoryCache: [String: CachedCommand] = [:]
 
@@ -45,10 +47,12 @@ public final class BuildLogCompiler {
     public init(
         projectRoot: String? = nil,
         derivedDataRoot: String? = nil,
-        cacheRoot: String? = nil
+        cacheRoot: String? = nil,
+        xcodePath: String? = nil
     ) {
         self.projectRoot = projectRoot
         self.derivedDataRoot = derivedDataRoot
+        self.selectedXcodePath = xcodePath
 
         let root: URL
         if let cacheRoot {
@@ -72,6 +76,48 @@ public final class BuildLogCompiler {
            ) {
             self.memoryCache = cached
         }
+    }
+
+    public func setXcodePath(
+        _ path: String?
+    ) {
+        settingsLock.lock()
+        selectedXcodePath = path
+        settingsLock.unlock()
+    }
+
+    public func xcodePath() -> String? {
+        settingsLock.lock()
+        defer { settingsLock.unlock() }
+
+        if let selectedXcodePath {
+            return selectedXcodePath
+        }
+
+        let result = Shell.run(
+            executable: "/usr/bin/xcode-select",
+            arguments: ["-p"]
+        )
+        guard result.status == 0 else {
+            return nil
+        }
+
+        let developer = result.stdout
+            .trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+
+        guard developer.hasSuffix(
+            "/Contents/Developer"
+        ) else {
+            return nil
+        }
+
+        return String(
+            developer.dropLast(
+                "/Contents/Developer".count
+            )
+        )
     }
 
     public func knownSwiftSources(
@@ -386,7 +432,8 @@ public final class BuildLogCompiler {
         let linkResult = Shell.run(
             executable: "/usr/bin/xcrun",
             arguments: linkArguments,
-            currentDirectory: projectRoot
+            currentDirectory: projectRoot,
+            environment: xcodeEnvironment()
         )
         let linkMs =
             (Date.timeIntervalSinceReferenceDate - linkStart) * 1000
@@ -1004,7 +1051,8 @@ public final class BuildLogCompiler {
     private func sdkPath(for sdk: String) -> String? {
         let result = Shell.run(
             executable: "/usr/bin/xcrun",
-            arguments: ["--sdk", sdk, "--show-sdk-path"]
+            arguments: ["--sdk", sdk, "--show-sdk-path"],
+            environment: xcodeEnvironment()
         )
         guard result.status == 0 else { return nil }
         let path = result.stdout
@@ -1013,13 +1061,27 @@ public final class BuildLogCompiler {
     }
 
     private func xcodeDeveloperDirectory() -> String? {
-        let result = Shell.run(
-            executable: "/usr/bin/xcode-select",
-            arguments: ["-p"]
+        guard let path = xcodePath() else {
+            return nil
+        }
+
+        return URL(
+            fileURLWithPath: path
         )
-        guard result.status == 0 else { return nil }
-        return result.stdout
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        .appendingPathComponent("Contents/Developer")
+        .path
+    }
+
+    private func xcodeEnvironment()
+        -> [String: String] {
+        guard let developer =
+                xcodeDeveloperDirectory() else {
+            return [:]
+        }
+
+        return [
+            "DEVELOPER_DIR": developer
+        ]
     }
 
     private func cachedCommand(
