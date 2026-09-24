@@ -64,7 +64,7 @@ public final class InjectionDeviceDiscovery {
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = port.bigEndian
         address.sin_addr = in_addr(
-            s_addr: htonl(INADDR_ANY)
+            s_addr: UInt32(INADDR_ANY).bigEndian
         )
 
         let result = withUnsafePointer(to: &address) {
