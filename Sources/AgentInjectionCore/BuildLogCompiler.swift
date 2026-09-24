@@ -946,7 +946,7 @@ public final class BuildLogCompiler {
         )
     }
 
-    private func parseCompilerDiagnostics(
+    func parseCompilerDiagnostics(
         _ output: String
     ) -> [CompilerDiagnostic] {
         var diagnostics: [CompilerDiagnostic] = []
