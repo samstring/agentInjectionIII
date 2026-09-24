@@ -3,21 +3,25 @@ import Foundation
 public enum ControlAction: String, Codable, Sendable {
     case status
     case inject
+    case loadDylib = "load_dylib"
 }
 
 public struct ControlRequest: Codable, Sendable {
     public let id: String
     public let action: ControlAction
     public let files: [String]?
+    public let path: String?
 
     public init(
         id: String = UUID().uuidString,
         action: ControlAction,
-        files: [String]? = nil
+        files: [String]? = nil,
+        path: String? = nil
     ) {
         self.id = id
         self.action = action
         self.files = files
+        self.path = path
     }
 }
 
