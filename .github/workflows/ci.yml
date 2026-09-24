@@ -27,6 +27,7 @@ jobs:
 
 
   simulator-preflight:
+    needs: swift
     runs-on: macos-26
 
     steps:
