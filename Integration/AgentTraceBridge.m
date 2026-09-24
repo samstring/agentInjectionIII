@@ -294,6 +294,64 @@ static BOOL AgentTraceOutputInstalled = NO;
     return socketFD;
 }
 
++ (BOOL)installXCTestObserverIfAvailable {
+    @synchronized (self) {
+        if (AgentXCTestObserverInstalled) {
+            return YES;
+        }
+
+        Class centerClass =
+            NSClassFromString(@"XCTestObservationCenter");
+        SEL sharedSelector =
+            NSSelectorFromString(
+                @"sharedTestObservationCenter"
+            );
+        SEL addSelector =
+            NSSelectorFromString(@"addTestObserver:");
+
+        if (!centerClass ||
+            ![centerClass
+                respondsToSelector:sharedSelector]) {
+            return NO;
+        }
+
+        typedef id (*ObjectSend)(id, SEL);
+        id center =
+            ((ObjectSend)objc_msgSend)(
+                centerClass,
+                sharedSelector
+            );
+
+        if (!center ||
+            ![center respondsToSelector:addSelector]) {
+            return NO;
+        }
+
+        AgentXCTestObserver =
+            [AgentInjectedTestObserver new];
+
+        typedef void (*AddObserverSend)(
+            id,
+            SEL,
+            id
+        );
+        ((AddObserverSend)objc_msgSend)(
+            center,
+            addSelector,
+            AgentXCTestObserver
+        );
+
+        AgentXCTestObserverInstalled = YES;
+
+        [self sendJSONObject:@{
+            @"type": @"test_observer",
+            @"timestamp":
+                @([NSDate timeIntervalSinceReferenceDate])
+        }];
+        return YES;
+    }
+}
+
 + (void)installSwiftTraceOutput {
     Class traceClass = NSClassFromString(@"SwiftTrace");
     SEL setter = NSSelectorFromString(@"setLogOutput:");
