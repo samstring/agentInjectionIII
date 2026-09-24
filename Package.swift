@@ -29,6 +29,10 @@ let package = Package(
         .package(
             url: "https://github.com/johnno1962/InjectionLite",
             revision: "63db51348e9d91f0faeaab54206e390175b6f327"
+        ),
+        .package(
+            url: "https://github.com/johnno1962/SwiftRegex5",
+            .upToNextMajor(from: "6.3.0")
         )
     ],
     targets: [
@@ -38,6 +42,10 @@ let package = Package(
                 .product(
                     name: "InjectionImpl",
                     package: "InjectionLite"
+                ),
+                .product(
+                    name: "SwiftRegexD",
+                    package: "SwiftRegex"
                 )
             ]
         ),
