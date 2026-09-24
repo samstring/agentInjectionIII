@@ -731,6 +731,9 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "objc++",
                 "xcode-build-log"
             ],
+            platform: runtime.platform,
+            arch: runtime.arch,
+            temporaryPath: runtime.temporaryPath,
             detail: runtime.connected
                 ? "InjectionNext runtime connected; explicit source injection is available."
                 : "Listening for InjectionNext runtime on 127.0.0.1:\(runtimeServer.port)."
