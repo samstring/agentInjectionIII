@@ -1,245 +1,335 @@
-# Architecture
+# agentInjectionIII architecture
 
-## Current architecture
+## Current execution path
 
 ```mermaid
 flowchart TD
     Agent["AI Agent / Codex / ChatGPT"] --> CLI["injectionctl"]
 
-    CLI -->|"newline-delimited JSON over Unix Domain Socket"| Daemon["injectiond"]
+    CLI -->|"newline-delimited JSON"| UDS["Unix Domain Socket<br/>/tmp/agentInjectionIII.sock"]
+    UDS --> Daemon["injectiond"]
+    Daemon --> Router["ControlRouter"]
+    Router --> Backend["InjectionNextRuntimeBackend"]
 
-    subgraph Host["macOS host"]
-        Daemon --> Router["ControlRouter"]
-        Router --> Backend["InjectionNextRuntimeBackend"]
-
-        Backend --> Doctor["doctor / environment checks"]
+    subgraph Mac["macOS host"]
         Backend --> Compiler["BuildLogCompiler"]
-        Compiler --> Logs["Xcode .xcactivitylog"]
-        Compiler --> Swift["original swift-frontend command"]
-        Compiler --> Clang["original clang command"]
-        Swift --> Object["single-source .o"]
-        Clang --> Object
-        Object --> Link["xcrun clang -> injection dylib"]
+        Compiler --> Logs["Xcode DerivedData<br/>*.xcactivitylog"]
+        Logs --> Original["Original Xcode compiler invocation"]
 
-        Backend --> RuntimeServer["InjectionNextRuntimeServer :8887"]
+        Original --> Type{"source type"}
+        Type -->|Swift| Swift["swift-frontend<br/>single primary file"]
+        Type -->|.m / .mm / C++| Clang["clang<br/>single source"]
+
+        Swift --> Obj["temporary .o"]
+        Clang --> Obj
+        Obj --> Link["xcrun clang<br/>dynamic library"]
+        Link --> Dylib["temporary injection dylib"]
+
+        Backend --> RuntimeServer["InjectionNextRuntimeServer<br/>127.0.0.1:8887"]
     end
 
-    subgraph Target["iOS Simulator DEBUG app"]
-        Bootstrap["AgentInjectionBootstrap"]
-        Runtime["embedded iOSInjection.bundle"]
-        App["Swift + Objective-C + CocoaPods code"]
+    subgraph Simulator["iOS Simulator DEBUG app"]
+        Bundle["embedded iOSInjection.bundle"]
+        Runtime["InjectionNext client runtime"]
+        App["running Swift + ObjC + Pods code"]
 
-        Bootstrap --> Runtime
+        Bundle --> Runtime
         Runtime --> App
     end
 
-    Link --> Backend
+    Dylib --> Backend
     RuntimeServer <-->|"InjectionNext wire protocol v4001"| Runtime
 ```
 
-## Trigger model
+## Design rule: command-triggered, not file-triggered
 
-The defining design choice is that an Agent command, not a file-system event,
-owns the injection lifecycle.
-
-Classic human hot reload:
+Classic InjectionIII / InjectionNext human workflow:
 
 ```text
-save source
-  -> watcher
-  -> compile
+save file
+  -> FileWatcher
+  -> recompile
   -> inject
 ```
 
 agentInjectionIII:
 
 ```text
-agent edits A.swift / B.m
-  -> agent finishes the logical change
-  -> injectionctl doctor A.swift
+Agent edits A.swift
+Agent edits B.m
+Agent finishes the logical change
   -> injectionctl inject A.swift B.m
-  -> compile / link / inject
-  -> structured JSON result
-  -> later: screenshot / trace / verify
+  -> compile
+  -> inject
+  -> structured result
+  -> Agent verifies
 ```
 
-A watcher can exist later as an optional human frontend, but it is not part of
-the Agent control API.
+The daemon intentionally does not watch source files.
 
-## Process boundary
+## Process boundaries
 
-`injectionctl` is intentionally stateless:
+### injectionctl
+
+Short-lived and stateless.
+
+Responsibilities:
+
+- normalize CLI input
+- send one JSON request
+- print one structured JSON response
+- return a meaningful exit code
+
+### injectiond
+
+Long-lived and stateful.
+
+Responsibilities:
+
+- keep the Unix control socket open
+- keep the InjectionNext runtime connection open
+- retain compiler-command cache
+- serialize runtime injection operations
+- compile/link changed sources
+- return machine-readable results
+
+### iOSInjection.bundle
+
+DEBUG-only runtime loaded inside the Simulator app.
+
+Responsibilities:
+
+- connect to the headless Mac server
+- receive a dylib path
+- dlopen / patch symbols using InjectionNext's runtime
+- report `injected`, `failed`, or `unhide`
+
+It is locally installed and optionally embedded so the app's Podfile does not change.
+
+## Runtime protocol
+
+The headless runtime server implements the subset of InjectionNext's protocol required for source injection.
 
 ```text
-request -> JSON response -> exit
+TCP 127.0.0.1:8887
+
+client -> server
+  Int32 4001
+  String validation key
+
+server -> client
+  command xcodePath
+
+client -> server
+  platform + arch
+  tmpPath
+  optional project metadata
+
+server -> client
+  load <dylib path>
+
+client -> server
+  injected | failed | unhide
 ```
 
-`injectiond` owns long-lived state:
+The Simulator and macOS host share the CoreSimulator filesystem, so the daemon can copy a dylib into the temporary directory reported by the client and send the `load` command.
 
-- the Unix control socket
-- the connected app runtime
-- runtime platform / architecture / temporary path
-- recovered compiler command cache
-- future trace / screenshot sessions
+## Compiler strategy
 
-This makes the command line safe for an Agent to call repeatedly without losing
-runtime state.
+The compiler does **not** reconstruct build flags from CocoaPods.
 
-## Control protocol
-
-Current actions:
+Instead:
 
 ```text
-status
-doctor [SOURCE]
-inject FILE [FILE ...]
-load_dylib DYLIB
+source path
+   |
+   v
+scan recent DerivedData Logs/Build/*.xcactivitylog
+   |
+   v
+find the exact Xcode compiler command that built the source
+   |
+   v
+rewrite only what is necessary for one-file compilation
 ```
 
-The backend boundary is:
-
-```swift
-protocol InjectionBackend {
-    var name: String { get }
-
-    func status() -> BackendStatus
-    func doctor(path: String?) -> DoctorReport
-    func inject(files: [String]) -> BackendInjectionResponse
-    func loadDylib(path: String) -> BackendInjectionResponse
-}
-```
-
-## Source compilation
-
-For an Objective-C + Swift + CocoaPods application, reconstructing compiler
-arguments from the Podfile would be too fragile.
-
-Instead `BuildLogCompiler` searches Xcode's existing `.xcactivitylog` files
-and recovers the command Xcode already used for the requested source.
-
-That preserves the real target context:
+This preserves project-specific state such as:
 
 - Header Search Paths
 - Framework Search Paths
 - module maps
-- bridging headers
-- CocoaPods defines
-- SDK
-- architecture / target triple
-- Swift frontend flags
+- bridging headers / PCH references
+- CocoaPods macros
+- SDK selection
+- target triples
+- Swift frontend options
 
-The recovered command is reduced to one requested source and a temporary
-object file. That object is linked into a dynamic library and handed to the
-runtime.
+### Swift rewriting
 
-Required Debug settings for the current log path:
+The compiler:
 
-```text
--Xlinker -interposable
-EMIT_FRONTEND_COMMAND_LINES = YES
-COMPILATION_CACHE_ENABLE_CACHING = NO
-```
+- preserves the requested `-primary-file`
+- removes other primary files
+- replaces the original `-o`
+- changes `-emit-object` to `-c`
+- strips per-primary output/index/diagnostic options
+- retains the target's original module/search-path flags
+- adds `DEBUG` and `INJECTING`
 
-## Runtime boundary
+When a historical `-filelist` has been deleted, it attempts to reconstruct it from the build log's `-output-file-map`.
 
-The current Agent runtime deliberately uses the InjectionNext client protocol:
+When a stale bridging-header PCH path is detected, it attempts the same recovery strategy used by InjectionLite: locate the most recent compatible PCH, symlink the historical path, and retry once.
 
-```text
-iOSInjection.bundle
-    |
-    | TCP 127.0.0.1:8887
-    |
-InjectionNextRuntimeServer
-```
+### Objective-C / Objective-C++
 
-Handshake metadata includes:
+The original clang invocation is retained and only the old output path is replaced. Injection adds:
 
 ```text
-protocol version 4001
-platform
-architecture
-runtime temporary directory
+-DDEBUG
+-DINJECTING
+-Xclang -fno-validate-pch
 ```
 
-For Simulator injection, the daemon copies the produced dylib into the
-runtime's temporary directory, sends the `load` command, and waits for the
-runtime's `injected` / `failed` response.
+## Link strategy
 
-## Project integration and team coexistence
-
-The shared application contains a very small DEBUG bootstrap:
+The generated object is linked as a dynamic library using the runtime platform:
 
 ```text
-AgentInjectionBootstrap
-       |
-       +-- embedded iOSInjection.bundle exists
-       |       -> Agent/headless runtime
-       |
-       +-- embedded bundle absent
-               -> /Applications/InjectionIII.app/.../iOSInjection.bundle
+iPhoneSimulator -> xcrun --sdk iphonesimulator clang
+iPhoneOS        -> xcrun --sdk iphoneos clang
+...
 ```
 
-The local bundle is copied by `scripts/embed-runtime.sh` only when installed
-under the developer's home directory, so there is no conditional Podfile and no
-`Podfile.lock` difference.
+The linker uses:
 
-This lets the Agent-enabled developer use:
+- the explicit SDK sysroot
+- the original target triple when available
+- `-undefined dynamic_lookup`
+- `-interposable`
+- Swift runtime search/rpath support
+
+Simulator is the first supported target. Device signing is a later phase.
+
+## Project integration
+
+```mermaid
+flowchart LR
+    subgraph Shared["shared Xcode project"]
+        Boot["AgentInjectionBootstrap"]
+        App["DEBUG app"]
+        Boot --> App
+    end
+
+    subgraph AgentDeveloper["agent-enabled developer"]
+        LocalBundle["~/.agentInjectionIII/runtime/iOSInjection.bundle"]
+        BuildPhase["optional embed-runtime.sh"]
+        Daemon["injectiond"]
+        LocalBundle --> BuildPhase --> App
+        App <--> Daemon
+    end
+
+    subgraph Teammate["other teammate"]
+        Classic["InjectionIII.app"]
+        Classic --> App
+    end
+```
+
+If the local runtime is not installed, `embed-runtime.sh` is a no-op. The bootstrap can then fall back to the team's existing InjectionIII.app bundle.
+
+No Podfile modification is required.
+
+## Failure taxonomy
+
+Errors are designed for agents to branch on programmatically.
+
+### Control plane
 
 ```text
-Agent -> injectionctl -> injectiond
+DAEMON_UNAVAILABLE
+INVALID_REQUEST
+MISSING_FILES
+MISSING_PATH
 ```
 
-while teammates keep:
+### Runtime
 
 ```text
-Developer -> InjectionIII.app
+RUNTIME_NOT_CONNECTED
+RUNTIME_HANDSHAKE_INCOMPLETE
+RUNTIME_VERSION_MISMATCH
+RUNTIME_KEY_REJECTED
+RUNTIME_*_FAILED
+DYLIB_INJECTION_FAILED
 ```
 
-from the same Xcode project.
-
-## Why not directly reuse an arbitrary classic InjectionIII bundle?
-
-The classic InjectionIII/HotReloading protocol differs from InjectionNext and
-InjectionIII builds generate a matching injection salt as part of the app/bundle
-build. A generic headless server therefore cannot reliably assume that any
-random prebuilt InjectionIII bundle has the same handshake values.
-
-For now the Agent path builds and patches a known InjectionNext-compatible
-runtime locally with `scripts/install-runtime.sh`, while the fallback remains
-available for teammates using InjectionIII.app.
-
-## Doctor
-
-`injectionctl doctor` is intended as the Agent's preflight.
-
-It checks:
-
-- selected Xcode developer directory
-- configured project root
-- available Xcode build logs
-- runtime connection
-- runtime handshake metadata
-- locally installed runtime bundle
-
-When a source is supplied, it also checks:
-
-- source path exists
-- a matching Xcode compiler command can be recovered
-
-This separates environment/setup failures from actual compiler or runtime
-injection failures.
-
-## Next boundaries
-
-The next high-value layers are:
+Typical action:
 
 ```text
-structured compiler diagnostics
-injection lifecycle event stream
-trace / untrace + method-call output
-screenshot
-touch record / replay
-persistent compiler command cache
-multiple runtime clients / target selection
-device signing and transport
+RUNTIME_NOT_CONNECTED
+  -> launch/relaunch DEBUG app
+  -> status
+  -> retry
 ```
+
+### Compilation
+
+```text
+SOURCE_NOT_FOUND
+UNSUPPORTED_SOURCE
+COMPILE_COMMAND_NOT_FOUND
+FILELIST_MISSING
+COMPILE_FAILED
+```
+
+Typical action:
+
+```text
+COMPILE_COMMAND_NOT_FOUND / FILELIST_MISSING
+  -> perform a normal Xcode Debug build
+  -> retry
+
+COMPILE_FAILED
+  -> inspect compiler output
+  -> fix source
+  -> retry injection
+```
+
+### Link
+
+```text
+LINK_FAILED
+```
+
+Typical action:
+
+- inspect SDK / target / unresolved-link diagnostics
+- fix link strategy or project settings
+- do not restart the app unless runtime state is also invalid
+
+## Current validation layers
+
+The repository contains:
+
+1. control-router unit tests,
+2. compiler command-rewrite regression tests,
+3. a fake InjectionNext TCP client integration test that validates:
+   - version/key handshake,
+   - xcodePath command,
+   - platform/arch reporting,
+   - tmpPath reporting,
+   - dylib copy + load command,
+   - injected response.
+
+A real CocoaPods app/Simulator validation is still required before calling the end-to-end path production-ready.
+
+## Next architecture work
+
+The next high-value additions are:
+
+- persistent compiler-command cache,
+- structured compiler diagnostics instead of one large error string,
+- injection lifecycle events (`detecting / compiling / linked / injecting / injected / failed`),
+- trace/untrace and method-call stream,
+- screenshots and touch record/replay,
+- multi-client selection,
+- real-device signing/transport.
