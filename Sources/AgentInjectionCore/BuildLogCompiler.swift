@@ -33,6 +33,8 @@ public final class BuildLogCompiler {
     private let derivedDataRoot: String?
     private let cacheURL: URL
     private let fileManager = FileManager.default
+    private let deviceTesting: Bool
+    private let deviceLibraries: [String]
     private let settingsLock = NSLock()
     private var selectedXcodePath: String?
     private let cacheLock = NSLock()
@@ -48,11 +50,18 @@ public final class BuildLogCompiler {
         projectRoot: String? = nil,
         derivedDataRoot: String? = nil,
         cacheRoot: String? = nil,
-        xcodePath: String? = nil
+        xcodePath: String? = nil,
+        deviceTesting: Bool = false,
+        deviceLibraries: [String] = [
+            "-framework", "XCTest",
+            "-lXCTestSwiftSupport"
+        ]
     ) {
         self.projectRoot = projectRoot
         self.derivedDataRoot = derivedDataRoot
         self.selectedXcodePath = xcodePath
+        self.deviceTesting = deviceTesting
+        self.deviceLibraries = deviceLibraries
 
         let root: URL
         if let cacheRoot {
@@ -1042,6 +1051,25 @@ public final class BuildLogCompiler {
                     platformName,
                 "-rpath", "/usr/lib/swift"
             ]
+        }
+
+        if deviceTesting &&
+           !platform.hasSuffix("Simulator") &&
+           platform != "MacOSX",
+           let developerDir =
+                xcodeDeveloperDirectory() {
+            let platformDev =
+                developerDir +
+                "/Platforms/\(platform).platform/Developer"
+
+            arguments += [
+                "-F", "/tmp/InjectionNext.Products",
+                "-F",
+                platformDev + "/Library/Frameworks",
+                "-L",
+                platformDev + "/usr/lib"
+            ]
+            arguments += deviceLibraries
         }
 
         arguments += [object, "-o", dylib]
