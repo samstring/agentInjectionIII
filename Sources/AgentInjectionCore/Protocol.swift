@@ -4,6 +4,7 @@ public enum ControlAction: String, Codable, Sendable {
     case status
     case inject
     case loadDylib = "load_dylib"
+    case doctor
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -66,6 +67,63 @@ public struct DaemonStatus: Codable, Sendable {
     }
 }
 
+public enum DoctorCheckState: String, Codable, Sendable {
+    case pass
+    case warning
+    case fail
+}
+
+public struct DoctorCheck: Codable, Sendable {
+    public let name: String
+    public let state: DoctorCheckState
+    public let message: String
+
+    public init(
+        name: String,
+        state: DoctorCheckState,
+        message: String
+    ) {
+        self.name = name
+        self.state = state
+        self.message = message
+    }
+}
+
+public struct DoctorRuntime: Codable, Sendable {
+    public let connected: Bool
+    public let platform: String?
+    public let arch: String?
+    public let temporaryPath: String?
+
+    public init(
+        connected: Bool,
+        platform: String? = nil,
+        arch: String? = nil,
+        temporaryPath: String? = nil
+    ) {
+        self.connected = connected
+        self.platform = platform
+        self.arch = arch
+        self.temporaryPath = temporaryPath
+    }
+}
+
+public struct DoctorReport: Codable, Sendable {
+    public let ready: Bool
+    public let checks: [DoctorCheck]
+    public let runtime: DoctorRuntime?
+
+    public init(
+        ready: Bool,
+        checks: [DoctorCheck],
+        runtime: DoctorRuntime? = nil
+    ) {
+        self.ready = ready
+        self.checks = checks
+        self.runtime = runtime
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -100,6 +158,7 @@ public struct ControlResponse: Codable, Sendable {
     public let ok: Bool
     public let status: DaemonStatus?
     public let injections: [InjectionResult]?
+    public let doctor: DoctorReport?
     public let error: ControlError?
 
     public init(
@@ -107,12 +166,14 @@ public struct ControlResponse: Codable, Sendable {
         ok: Bool,
         status: DaemonStatus? = nil,
         injections: [InjectionResult]? = nil,
+        doctor: DoctorReport? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
         self.ok = ok
         self.status = status
         self.injections = injections
+        self.doctor = doctor
         self.error = error
     }
 
@@ -130,6 +191,23 @@ public struct ControlResponse: Codable, Sendable {
             ok: error == nil,
             injections: results,
             error: error
+        )
+    }
+
+    public static func doctor(
+        id: String,
+        report: DoctorReport
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: report.ready,
+            doctor: report,
+            error: report.ready
+                ? nil
+                : ControlError(
+                    code: "DOCTOR_NOT_READY",
+                    message: "One or more required injection checks failed."
+                )
         )
     }
 
