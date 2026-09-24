@@ -69,6 +69,10 @@ private func printUsage() {
       injectionctl [--socket PATH] events clear
       injectionctl [--socket PATH] [--target ID] env NAME [VALUE]
       injectionctl [--socket PATH] profile [LIMIT]
+      injectionctl [--socket PATH] call-order
+      injectionctl [--socket PATH] instances start
+      injectionctl [--socket PATH] instances read
+      injectionctl [--socket PATH] instances stop
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope frameworks [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope uikit [FILTER_REGEX]
@@ -387,6 +391,36 @@ case "profile":
         action: .profileSnapshot,
         limit: limit
     )
+
+case "call-order":
+    guard options.arguments.count == 1 else {
+        fatalUsage("call-order does not accept arguments.")
+    }
+    request = ControlRequest(
+        action: .callOrder
+    )
+
+case "instances":
+    guard options.arguments.count == 2 else {
+        fatalUsage("instances requires start, read, or stop.")
+    }
+
+    switch options.arguments[1] {
+    case "start":
+        request = ControlRequest(
+            action: .instancesStart
+        )
+    case "read":
+        request = ControlRequest(
+            action: .instancesRead
+        )
+    case "stop":
+        request = ControlRequest(
+            action: .instancesStop
+        )
+    default:
+        fatalUsage("Unknown instances command: \(options.arguments[1])")
+    }
 
 case "trace":
     guard options.arguments.count >= 2 else {
