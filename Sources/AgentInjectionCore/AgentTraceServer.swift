@@ -22,6 +22,7 @@ public final class AgentTraceServer {
     private var nextSequence: Int64 = 1
     private var active = false
     private var activeFilter: String?
+    private var pendingCommand: PendingTraceCommand?
 
     private let maximumBufferedEvents = 10_000
 
@@ -126,6 +127,9 @@ public final class AgentTraceServer {
         filter: String?
     ) -> Result<TraceResult, ControlError> {
         let client: TraceBridgeClient
+        let pending = PendingTraceCommand(
+            expectedState: "started"
+        )
 
         lock.lock()
         guard let connected = self.client else {
@@ -137,8 +141,18 @@ public final class AgentTraceServer {
                 )
             )
         }
+        guard pendingCommand == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_BUSY",
+                    message: "Another trace command is still pending."
+                )
+            )
+        }
         client = connected
         events.removeAll(keepingCapacity: true)
+        pendingCommand = pending
         lock.unlock()
 
         do {
@@ -147,6 +161,7 @@ public final class AgentTraceServer {
                 filter: filter
             )
         } catch {
+            clearPending(pending)
             return .failure(
                 ControlError(
                     code: "TRACE_COMMAND_FAILED",
@@ -154,6 +169,30 @@ public final class AgentTraceServer {
                 )
             )
         }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 10
+        ) == .success else {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_TIMEOUT",
+                    message: "Timed out waiting for the app to confirm trace start."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_START_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        clearPending(pending)
 
         lock.lock()
         active = true
@@ -172,6 +211,9 @@ public final class AgentTraceServer {
     public func stopTrace()
         -> Result<TraceResult, ControlError> {
         let client: TraceBridgeClient
+        let pending = PendingTraceCommand(
+            expectedState: "stopped"
+        )
 
         lock.lock()
         guard let connected = self.client else {
@@ -185,7 +227,17 @@ public final class AgentTraceServer {
                 )
             )
         }
+        guard pendingCommand == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_BUSY",
+                    message: "Another trace command is still pending."
+                )
+            )
+        }
         client = connected
+        pendingCommand = pending
         lock.unlock()
 
         do {
@@ -194,6 +246,7 @@ public final class AgentTraceServer {
                 filter: nil
             )
         } catch {
+            clearPending(pending)
             return .failure(
                 ControlError(
                     code: "TRACE_COMMAND_FAILED",
@@ -201,6 +254,30 @@ public final class AgentTraceServer {
                 )
             )
         }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 10
+        ) == .success else {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_TIMEOUT",
+                    message: "Timed out waiting for the app to confirm trace stop."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_STOP_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        clearPending(pending)
 
         lock.lock()
         active = false
@@ -262,7 +339,7 @@ public final class AgentTraceServer {
             let bridge = TraceBridgeClient(
                 fd: fd,
                 onEvent: { [weak self] message in
-                    self?.append(message)
+                    self?.handle(message)
                 }
             )
 
@@ -279,10 +356,51 @@ public final class AgentTraceServer {
                     self.client = nil
                     self.active = false
                     self.activeFilter = nil
+                    if let pending = self.pendingCommand {
+                        pending.error = "AgentTraceBridge disconnected."
+                        self.pendingCommand = nil
+                        pending.semaphore.signal()
+                    }
                 }
                 self.lock.unlock()
             }
         }
+    }
+
+    private func handle(
+        _ message: TraceBridgeMessage
+    ) {
+        if message.type == "state" {
+            lock.lock()
+            let pending = pendingCommand
+
+            if let pending {
+                if message.state == pending.expectedState {
+                    pendingCommand = nil
+                    pending.semaphore.signal()
+                } else if message.state == "error" {
+                    pending.error = message.error
+                        ?? "Trace bridge reported an unknown error."
+                    pendingCommand = nil
+                    pending.semaphore.signal()
+                }
+            }
+
+            lock.unlock()
+            return
+        }
+
+        append(message)
+    }
+
+    private func clearPending(
+        _ pending: PendingTraceCommand
+    ) {
+        lock.lock()
+        if pendingCommand === pending {
+            pendingCommand = nil
+        }
+        lock.unlock()
     }
 
     private func append(
@@ -314,11 +432,23 @@ public final class AgentTraceServer {
     }
 }
 
+private final class PendingTraceCommand {
+    let expectedState: String
+    let semaphore = DispatchSemaphore(value: 0)
+    var error: String?
+
+    init(expectedState: String) {
+        self.expectedState = expectedState
+    }
+}
+
 private struct TraceBridgeMessage: Decodable {
     let type: String
     let timestamp: Double?
     let text: String?
     let indent: Int?
+    let state: String?
+    let error: String?
 }
 
 private struct TraceBridgeCommand: Encodable {
