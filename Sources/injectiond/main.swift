@@ -11,6 +11,11 @@ private struct DaemonOptions {
     var enableDevices = false
     var codeSigningIdentity: String?
     var xcodePath: String?
+    var deviceTesting = false
+    var deviceLibraries: [String] = [
+        "-framework", "XCTest",
+        "-lXCTestSwiftSupport"
+    ]
 }
 
 private func parseOptions() -> DaemonOptions {
@@ -70,6 +75,19 @@ private func parseOptions() -> DaemonOptions {
             options.xcodePath = arguments[index + 1]
             index += 2
 
+        case "--device-testing":
+            options.deviceTesting = true
+            index += 1
+
+        case "--device-libraries":
+            guard index + 1 < arguments.count else {
+                fatalUsage("--device-libraries requires a quoted linker option string")
+            }
+            options.deviceLibraries = arguments[index + 1]
+                .split(whereSeparator: { $0.isWhitespace })
+                .map(String.init)
+            index += 2
+
         case "--derived-data":
             guard index + 1 < arguments.count else {
                 fatalUsage("--derived-data requires a path")
@@ -91,7 +109,7 @@ private func parseOptions() -> DaemonOptions {
 
 private func printUsage() {
     print("""
-    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH] [--xcode-path XCODE.app] [--enable-devices] [--codesign-identity IDENTITY]
+    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH] [--xcode-path XCODE.app] [--enable-devices] [--codesign-identity IDENTITY] [--device-testing] [--device-libraries OPTIONS]
 
       --socket PATH       Unix domain socket path for injectionctl.
                           Default: /tmp/agentInjectionIII.sock
@@ -105,6 +123,10 @@ private func printUsage() {
       --enable-devices    Listen on all interfaces and answer InjectionNext device discovery.
       --codesign-identity IDENTITY
                           Expanded Apple code signing identity used for physical-device dylibs.
+      --device-testing    Link XCTest/Swift Testing support into device injection dylibs.
+      --device-libraries OPTIONS
+                          Quoted linker options for device tests.
+                          Default: -framework XCTest -lXCTestSwiftSupport
     """)
 }
 
@@ -145,7 +167,9 @@ let backend = InjectionNextRuntimeBackend(
     projectRoot: options.projectRoot,
     derivedDataRoot: options.derivedDataRoot,
     codeSigningIdentity: options.codeSigningIdentity,
-    xcodePath: options.xcodePath
+    xcodePath: options.xcodePath,
+    deviceTesting: options.deviceTesting,
+    deviceLibraries: options.deviceLibraries
 )
 let router = ControlRouter(
     socketPath: options.socketPath,
