@@ -27,6 +27,10 @@ public enum ControlAction: String, Codable, Sendable {
     case setRuntimeEnv = "set_runtime_env"
     case traceScope = "trace_scope"
     case compilerState = "compiler_state"
+    case callOrder = "call_order"
+    case instancesStart = "instances_start"
+    case instancesRead = "instances_read"
+    case instancesStop = "instances_stop"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -536,6 +540,8 @@ public struct ControlResponse: Codable, Sendable {
     public let events: InjectionEventsResult?
     public let profile: ProfileResult?
     public let compilerState: CompilerStateResult?
+    public let callOrder: CallOrderResult?
+    public let instances: InstanceCountsResult?
     public let error: ControlError?
 
     public init(
@@ -554,6 +560,8 @@ public struct ControlResponse: Codable, Sendable {
         events: InjectionEventsResult? = nil,
         profile: ProfileResult? = nil,
         compilerState: CompilerStateResult? = nil,
+        callOrder: CallOrderResult? = nil,
+        instances: InstanceCountsResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -571,6 +579,8 @@ public struct ControlResponse: Codable, Sendable {
         self.events = events
         self.profile = profile
         self.compilerState = compilerState
+        self.callOrder = callOrder
+        self.instances = instances
         self.error = error
     }
 
