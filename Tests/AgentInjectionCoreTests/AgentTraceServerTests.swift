@@ -68,8 +68,11 @@ final class AgentTraceServerTests: XCTestCase {
         )
         XCTAssertFalse(test.passed)
         XCTAssertEqual(test.failures, 1)
+        let duration = try XCTUnwrap(
+            test.durationSeconds
+        )
         XCTAssertEqual(
-            test.durationSeconds,
+            duration,
             0.125,
             accuracy: 0.001
         )
