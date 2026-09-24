@@ -42,6 +42,9 @@ private func printUsage() {
       injectionctl [--socket PATH] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
       injectionctl [--socket PATH] screenshot [OUTPUT.png]
+      injectionctl [--socket PATH] trace start [FILTER_REGEX]
+      injectionctl [--socket PATH] trace read [LIMIT]
+      injectionctl [--socket PATH] trace stop
 
     Responses are JSON and commands return a non-zero exit status on failure.
     """)
@@ -135,6 +138,52 @@ case "screenshot":
             ? absolutePath(options.arguments[1])
             : nil
     )
+
+case "trace":
+    guard options.arguments.count >= 2 else {
+        fatalUsage("trace requires start, read, or stop.")
+    }
+
+    switch options.arguments[1] {
+    case "start":
+        guard options.arguments.count <= 3 else {
+            fatalUsage("trace start accepts at most one filter regex.")
+        }
+        request = ControlRequest(
+            action: .traceStart,
+            filter: options.arguments.count == 3
+                ? options.arguments[2]
+                : nil
+        )
+
+    case "read":
+        guard options.arguments.count <= 3 else {
+            fatalUsage("trace read accepts at most one limit.")
+        }
+
+        var limit: Int?
+        if options.arguments.count == 3 {
+            guard let parsed = Int(options.arguments[2]),
+                  parsed > 0 else {
+                fatalUsage("trace read limit must be a positive integer.")
+            }
+            limit = parsed
+        }
+
+        request = ControlRequest(
+            action: .traceRead,
+            limit: limit
+        )
+
+    case "stop":
+        guard options.arguments.count == 2 else {
+            fatalUsage("trace stop does not accept arguments.")
+        }
+        request = ControlRequest(action: .traceStop)
+
+    default:
+        fatalUsage("Unknown trace command: \(options.arguments[1])")
+    }
 
 default:
     fatalUsage("Unknown command: \(command)")
