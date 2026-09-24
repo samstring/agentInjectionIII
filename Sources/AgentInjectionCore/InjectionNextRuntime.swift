@@ -697,11 +697,15 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
     public init(
         runtimeServer: InjectionNextRuntimeServer,
-        projectRoot: String? = nil
+        projectRoot: String? = nil,
+        derivedDataRoot: String? = nil
     ) {
         self.runtimeServer = runtimeServer
         self.projectRoot = projectRoot
-        self.compiler = BuildLogCompiler(projectRoot: projectRoot)
+        self.compiler = BuildLogCompiler(
+            projectRoot: projectRoot,
+            derivedDataRoot: derivedDataRoot
+        )
     }
 
     public func status() -> BackendStatus {
