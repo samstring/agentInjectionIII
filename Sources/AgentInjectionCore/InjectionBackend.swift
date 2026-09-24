@@ -50,6 +50,8 @@ public protocol InjectionBackend: AnyObject {
     func instancesStart() -> Result<InstanceCountsResult, ControlError>
     func instancesRead() -> Result<InstanceCountsResult, ControlError>
     func instancesStop() -> Result<InstanceCountsResult, ControlError>
+    func testResults(limit: Int?) -> TestResultsResult
+    func clearTestResults() -> TestResultsResult
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
 }
@@ -371,6 +373,23 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                 code: "TRACE_BRIDGE_NOT_READY",
                 message: "Scaffold backend has no lifetime-tracking bridge."
             )
+        )
+    }
+
+    public func testResults(
+        limit: Int?
+    ) -> TestResultsResult {
+        TestResultsResult(
+            connected: false,
+            results: []
+        )
+    }
+
+    public func clearTestResults()
+        -> TestResultsResult {
+        TestResultsResult(
+            connected: false,
+            results: []
         )
     }
 
