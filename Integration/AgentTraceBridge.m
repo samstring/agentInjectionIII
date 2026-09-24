@@ -253,8 +253,6 @@ static dispatch_once_t AgentTraceStartOnce;
         dispatch_async(dispatch_get_main_queue(), ^{
             [self invokeNSObjectClassSelector:
                 NSSelectorFromString(@"swiftTraceRemoveAllTraces")];
-            [self invokeNSObjectClassSelector:
-                NSSelectorFromString(@"swiftTraceRevertAllInterposes")];
             [self setTraceFilter:nil];
         });
     }
