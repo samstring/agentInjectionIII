@@ -1462,7 +1462,9 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "instance-counts",
                 "compiler-interception",
                 "xctest-results",
-                "reorder-project"
+                "reorder-project",
+                "xprobe",
+                "eval"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -2193,6 +2195,32 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 apply: apply
             )
         }
+    }
+
+    public func xprobeSearch(
+        pattern: String?
+    ) -> Result<XprobeResult, ControlError> {
+        traceServer.xprobeSearch(
+            pattern: pattern
+        )
+    }
+
+    public func xprobeInspect(
+        objectID: Int
+    ) -> Result<XprobeResult, ControlError> {
+        traceServer.xprobeInspect(
+            objectID: objectID
+        )
+    }
+
+    public func eval(
+        objectID: Int,
+        code: String
+    ) -> Result<EvalResult, ControlError> {
+        traceServer.eval(
+            objectID: objectID,
+            code: code
+        )
     }
 
     public func traceStop()
