@@ -8,7 +8,7 @@ SOURCE="$SMOKE_DIR/Sources/SmokeViewController.swift"
 BUNDLE_ID="dev.agentinjection.smoke"
 
 ARTIFACTS="${SMOKE_ARTIFACTS:-${RUNNER_TEMP:-$REPO_ROOT/.artifacts}/agentInjectionIII-smoke}"
-DERIVED="$ARTIFACTS/DerivedData"
+DERIVED="${SMOKE_DERIVED_DATA:-${RUNNER_TEMP:-/tmp}/agentInjectionIII-smoke-derived}"
 SOCKET="$ARTIFACTS/agentInjectionIII.sock"
 DAEMON_LOG="$ARTIFACTS/injectiond.log"
 BUILD_LOG="$ARTIFACTS/xcodebuild.log"
