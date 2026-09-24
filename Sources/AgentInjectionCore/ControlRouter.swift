@@ -403,6 +403,66 @@ public final class ControlRouter {
                 )
             }
 
+        case .callOrder:
+            switch backend.callOrder() {
+            case .success(let result):
+                return .callOrder(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .instancesStart:
+            switch backend.instancesStart() {
+            case .success(let result):
+                return .instances(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .instancesRead:
+            switch backend.instancesRead() {
+            case .success(let result):
+                return .instances(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .instancesStop:
+            switch backend.instancesStop() {
+            case .success(let result):
+                return .instances(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .traceStop:
             switch backend.traceStop() {
             case .success(let result):
