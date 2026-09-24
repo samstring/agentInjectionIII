@@ -67,6 +67,22 @@ public final class ControlRouter {
                 results: result.results,
                 error: result.error
             )
+
+        case .loadDylib:
+            guard let path = request.path, !path.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_PATH",
+                    message: "load_dylib requires a dylib path."
+                )
+            }
+
+            let result = backend.loadDylib(path: path)
+            return .injection(
+                id: request.id,
+                results: result.results,
+                error: result.error
+            )
         }
     }
 }
