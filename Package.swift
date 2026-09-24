@@ -12,6 +12,10 @@ let package = Package(
             name: "AgentInjectionCore",
             targets: ["AgentInjectionCore"]
         ),
+        .library(
+            name: "AgentInjectionIntegration",
+            targets: ["AgentInjectionIntegration"]
+        ),
         .executable(
             name: "injectiond",
             targets: ["injectiond"]
@@ -24,6 +28,11 @@ let package = Package(
     targets: [
         .target(
             name: "AgentInjectionCore"
+        ),
+        .target(
+            name: "AgentInjectionIntegration",
+            path: "Integration",
+            publicHeadersPath: "."
         ),
         .executableTarget(
             name: "injectiond",
