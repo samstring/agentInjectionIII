@@ -204,21 +204,43 @@ private enum InjectionNextWire {
 }
 
 public struct InjectionRuntimeStatus: Codable, Sendable {
+    public let id: String?
     public let connected: Bool
     public let platform: String?
     public let arch: String?
     public let temporaryPath: String?
+    public let peerAddress: String?
+    public let isLocal: Bool
 
     public init(
+        id: String? = nil,
         connected: Bool,
         platform: String? = nil,
         arch: String? = nil,
-        temporaryPath: String? = nil
+        temporaryPath: String? = nil,
+        peerAddress: String? = nil,
+        isLocal: Bool = true
     ) {
+        self.id = id
         self.connected = connected
         self.platform = platform
         self.arch = arch
         self.temporaryPath = temporaryPath
+        self.peerAddress = peerAddress
+        self.isLocal = isLocal
+    }
+
+    public var target: RuntimeTarget? {
+        guard let id else { return nil }
+        return RuntimeTarget(
+            id: id,
+            platform: platform,
+            arch: arch,
+            temporaryPath: temporaryPath,
+            peerAddress: peerAddress,
+            isLocal: isLocal,
+            connected: connected
+        )
     }
 }
 
@@ -234,7 +256,16 @@ private final class PendingRuntimeScreenshot {
     var data: Data?
 }
 
+private final class PendingTouchReplay {
+    let semaphore = DispatchSemaphore(value: 0)
+    var payload: String?
+}
+
 private final class InjectionRuntimeClient {
+    let id: String
+    let peerAddress: String
+    let isLocal: Bool
+
     private let fd: Int32
     private let writeLock = NSLock()
     private let stateLock = NSLock()
@@ -246,9 +277,21 @@ private final class InjectionRuntimeClient {
     private var connectedValue = true
     private var pendingInjection: PendingRuntimeInjection?
     private var pendingScreenshot: PendingRuntimeScreenshot?
+    private var pendingTouchReplay: PendingTouchReplay?
+    private var touchEvents: [String] = []
+    private let logStore: AgentLogStore
 
-    init(fd: Int32) {
+    init(
+        fd: Int32,
+        peerAddress: String,
+        isLocal: Bool,
+        logStore: AgentLogStore
+    ) {
+        self.id = UUID().uuidString
         self.fd = fd
+        self.peerAddress = peerAddress
+        self.isLocal = isLocal
+        self.logStore = logStore
     }
 
     deinit {
