@@ -56,6 +56,16 @@ public protocol InjectionBackend: AnyObject {
         path: String?,
         apply: Bool
     ) -> Result<ProjectReorderPlan, ControlError>
+    func xprobeSearch(
+        pattern: String?
+    ) -> Result<XprobeResult, ControlError>
+    func xprobeInspect(
+        objectID: Int
+    ) -> Result<XprobeResult, ControlError>
+    func eval(
+        objectID: Int,
+        code: String
+    ) -> Result<EvalResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
 }
@@ -405,6 +415,40 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             ControlError(
                 code: "REORDER_NOT_READY",
                 message: "Scaffold backend cannot reorder an Xcode project."
+            )
+        )
+    }
+
+    public func xprobeSearch(
+        pattern: String?
+    ) -> Result<XprobeResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "XPROBE_UNAVAILABLE",
+                message: "Scaffold backend has no Xprobe runtime."
+            )
+        )
+    }
+
+    public func xprobeInspect(
+        objectID: Int
+    ) -> Result<XprobeResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "XPROBE_UNAVAILABLE",
+                message: "Scaffold backend has no Xprobe runtime."
+            )
+        )
+    }
+
+    public func eval(
+        objectID: Int,
+        code: String
+    ) -> Result<EvalResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "XPROBE_UNAVAILABLE",
+                message: "Scaffold backend has no Xprobe runtime."
             )
         )
     }
