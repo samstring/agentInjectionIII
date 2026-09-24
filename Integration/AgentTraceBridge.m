@@ -267,6 +267,43 @@ static BOOL AgentTraceOutputInstalled = NO;
         return;
     }
 
+    if ([action isEqualToString:@"profile_snapshot"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SEL elapsedSelector =
+                NSSelectorFromString(@"swiftTraceElapsedTimes");
+            SEL countSelector =
+                NSSelectorFromString(@"swiftTraceInvocationCounts");
+
+            if (![NSObject respondsToSelector:elapsedSelector] ||
+                ![NSObject respondsToSelector:countSelector]) {
+                [self sendTraceState:@"error"
+                               error:@"SwiftTrace profiling APIs are unavailable."];
+                return;
+            }
+
+            typedef id (*ObjectSend)(id, SEL);
+            NSDictionary *elapsed =
+                ((ObjectSend)objc_msgSend)(
+                    NSObject.class,
+                    elapsedSelector
+                ) ?: @{};
+            NSDictionary *invocations =
+                ((ObjectSend)objc_msgSend)(
+                    NSObject.class,
+                    countSelector
+                ) ?: @{};
+
+            [self sendJSONObject:@{
+                @"type": @"profile",
+                @"timestamp":
+                    @([NSDate timeIntervalSinceReferenceDate]),
+                @"elapsed": elapsed,
+                @"invocations": invocations
+            }];
+        });
+        return;
+    }
+
     if ([action isEqualToString:@"trace_stop"]) {
         dispatch_async(dispatch_get_main_queue(), ^{
             SEL stopSelector =
