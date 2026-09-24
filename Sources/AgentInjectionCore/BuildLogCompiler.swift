@@ -266,12 +266,29 @@ public final class BuildLogCompiler {
 
         let normalized = standardized(source)
         let exists = fileManager.fileExists(atPath: normalized)
-        let command = exists
-            ? locateCompilationCommand(
-                source: normalized,
-                platform: platform ?? ""
-            )
-            : nil
+        let requestedPlatform = platform ?? ""
+        let command: CachedCommand?
+        if exists {
+            let exactKey = normalized + "|" + requestedPlatform
+            if let cached = cachedCommand(
+                for: exactKey
+            ) {
+                command = cached
+            } else if requestedPlatform.isEmpty {
+                cacheLock.lock()
+                command = memoryCache.first {
+                    $0.key.hasPrefix(normalized + "|")
+                }?.value
+                cacheLock.unlock()
+            } else {
+                command = locateCompilationCommand(
+                    source: normalized,
+                    platform: requestedPlatform
+                )
+            }
+        } else {
+            command = nil
+        }
 
         return Diagnostics(
             derivedDataRoot: root,
