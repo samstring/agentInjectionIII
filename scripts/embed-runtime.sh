@@ -1,19 +1,26 @@
 #!/bin/bash
 set -euo pipefail
 
-# Intended to run as an Xcode Run Script build phase.
-# If the developer has not installed the local runtime, this is a no-op,
-# so teammates can keep their existing InjectionIII.app workflow.
-
 if [ "${CONFIGURATION:-}" != "Debug" ] && [ "${AGENT_INJECTION_FORCE:-0}" != "1" ]; then
   exit 0
 fi
 
 ROOT="${AGENT_INJECTION_HOME:-$HOME/.agentInjectionIII}"
-SOURCE="${AGENT_INJECTION_RUNTIME:-$ROOT/runtime/iOSInjection.bundle}"
+
+case "${PLATFORM_NAME:-}" in
+  iphoneos|appletvos|xros)
+    DEFAULT_SOURCE="$ROOT/runtime/device/iOSInjection.bundle"
+    ;;
+  *)
+    DEFAULT_SOURCE="$ROOT/runtime/simulator/iOSInjection.bundle"
+    ;;
+esac
+
+SOURCE="${AGENT_INJECTION_RUNTIME:-$DEFAULT_SOURCE}"
 
 if [ ! -d "$SOURCE" ]; then
-  echo "agentInjectionIII: local runtime not installed; skipping."
+  echo "agentInjectionIII: local runtime not installed for PLATFORM_NAME=${PLATFORM_NAME:-unknown}; skipping."
+  echo "  expected: $SOURCE"
   exit 0
 fi
 
@@ -29,4 +36,4 @@ mkdir -p "$DEST_DIR"
 rm -rf "$DEST"
 rsync -a "$SOURCE/" "$DEST/"
 
-echo "agentInjectionIII: embedded $DEST"
+echo "agentInjectionIII: embedded $SOURCE -> $DEST"
