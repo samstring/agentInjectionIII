@@ -148,6 +148,79 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.doctor?.checks.first?.state, .fail)
     }
 
+    func testXprobeAndEvalValidateAndFailCleanlyOnScaffold() throws {
+        let backend = ScaffoldInjectionBackend()
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let search = try route(
+            ControlRequest(
+                action: .xprobeSearch,
+                filter: "UIViewController"
+            ),
+            through: router
+        )
+        XCTAssertFalse(search.ok)
+        XCTAssertEqual(
+            search.error?.code,
+            "XPROBE_UNAVAILABLE"
+        )
+
+        let missingInspect = try route(
+            ControlRequest(
+                action: .xprobeInspect
+            ),
+            through: router
+        )
+        XCTAssertFalse(missingInspect.ok)
+        XCTAssertEqual(
+            missingInspect.error?.code,
+            "MISSING_OBJECT_ID"
+        )
+
+        let inspect = try route(
+            ControlRequest(
+                action: .xprobeInspect,
+                objectID: 7
+            ),
+            through: router
+        )
+        XCTAssertFalse(inspect.ok)
+        XCTAssertEqual(
+            inspect.error?.code,
+            "XPROBE_UNAVAILABLE"
+        )
+
+        let missingEvalCode = try route(
+            ControlRequest(
+                action: .eval,
+                objectID: 7
+            ),
+            through: router
+        )
+        XCTAssertFalse(missingEvalCode.ok)
+        XCTAssertEqual(
+            missingEvalCode.error?.code,
+            "MISSING_CODE"
+        )
+
+        let eval = try route(
+            ControlRequest(
+                action: .eval,
+                payload: "self.description",
+                objectID: 7
+            ),
+            through: router
+        )
+        XCTAssertFalse(eval.ok)
+        XCTAssertEqual(
+            eval.error?.code,
+            "XPROBE_UNAVAILABLE"
+        )
+    }
+
     func testBuildLogCompilerKeepsOnlyRequestedPrimary() throws {
         let compiler = BuildLogCompiler(projectRoot: "/repo")
         let source = "/repo/Sources/Foo.swift"
