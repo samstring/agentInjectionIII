@@ -21,6 +21,7 @@ public final class BuildLogCompiler {
     }
 
     private let projectRoot: String?
+    private let derivedDataRoot: String?
     private let fileManager = FileManager.default
     private let cacheLock = NSLock()
     private var memoryCache: [String: CachedCommand] = [:]
@@ -31,8 +32,12 @@ public final class BuildLogCompiler {
     private let optionsToRemove =
         #"(-(pch-output-dir|supplementary-output-file-map|emit-((reference-)?dependencies|const-values)|serialize-diagnostics|index-(store|unit-output))(-path)?|(-validate-clang-modules-once )?-clang-build-session-file|-Xcc -ivfsstatcache -Xcc)"#
 
-    public init(projectRoot: String? = nil) {
+    public init(
+        projectRoot: String? = nil,
+        derivedDataRoot: String? = nil
+    ) {
         self.projectRoot = projectRoot
+        self.derivedDataRoot = derivedDataRoot
     }
 
     public func compileAndLink(
@@ -251,8 +256,17 @@ public final class BuildLogCompiler {
     }
 
     private func buildLogsNewestFirst() -> [URL] {
-        let derivedData = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Developer/Xcode/DerivedData")
+        let derivedData: URL
+        if let derivedDataRoot {
+            derivedData = URL(
+                fileURLWithPath: NSString(
+                    string: derivedDataRoot
+                ).expandingTildeInPath
+            )
+        } else {
+            derivedData = fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Developer/Xcode/DerivedData")
+        }
 
         guard let workspaces = try? fileManager.contentsOfDirectory(
             at: derivedData,
