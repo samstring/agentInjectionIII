@@ -4,6 +4,7 @@ import UIKit
 final class SmokeViewController: UIViewController {
     private let statusLabel = UILabel()
     private let subtitleLabel = UILabel()
+    private let touchButton = UIButton(type: .system)
     private var timer: Timer?
 
     override func viewDidLoad() {
@@ -27,10 +28,28 @@ final class SmokeViewController: UIViewController {
         subtitleLabel.text =
             SmokeObjCHelper.podBackedSubtitle()
 
+        touchButton.setTitle(
+            "Replay touch",
+            for: .normal
+        )
+        touchButton.titleLabel?.font =
+            .systemFont(
+                ofSize: 18,
+                weight: .semibold
+            )
+        touchButton.accessibilityIdentifier =
+            "touch-replay-button"
+        touchButton.addTarget(
+            self,
+            action: #selector(didReplayTouch),
+            for: .touchUpInside
+        )
+
         let stack = UIStackView(
             arrangedSubviews: [
                 statusLabel,
-                subtitleLabel
+                subtitleLabel,
+                touchButton
             ]
         )
         stack.axis = .vertical
@@ -54,6 +73,9 @@ final class SmokeViewController: UIViewController {
                 lessThanOrEqualTo:
                     view.trailingAnchor,
                 constant: -24
+            ),
+            touchButton.heightAnchor.constraint(
+                equalToConstant: 52
             )
         ])
 
@@ -67,6 +89,11 @@ final class SmokeViewController: UIViewController {
         }
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        writeTouchTarget()
+    }
+
     deinit {
         timer?.invalidate()
     }
@@ -75,28 +102,78 @@ final class SmokeViewController: UIViewController {
         "BEFORE"
     }
 
+    @objc private func didReplayTouch() {
+        guard let marker = documentURL(
+            named: "agentInjection-touch.txt"
+        ) else {
+            return
+        }
+
+        try? "TOUCHED".write(
+            to: marker,
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
     private func refreshSmokeState() {
         let message = smokeMessage()
         statusLabel.text = message
 
-        guard let documents = FileManager.default
-            .urls(
-                for: .documentDirectory,
-                in: .userDomainMask
-            )
-            .first else {
+        guard let marker = documentURL(
+            named: "agentInjection-smoke.txt"
+        ) else {
             return
         }
-
-        let marker = documents
-            .appendingPathComponent(
-                "agentInjection-smoke.txt"
-            )
 
         try? message.write(
             to: marker,
             atomically: true,
             encoding: .utf8
         )
+    }
+
+    private func writeTouchTarget() {
+        guard touchButton.window != nil,
+              let target = documentURL(
+                named: "agentInjection-touch-target.json"
+              ) else {
+            return
+        }
+
+        let center = touchButton.convert(
+            CGPoint(
+                x: touchButton.bounds.midX,
+                y: touchButton.bounds.midY
+            ),
+            to: nil
+        )
+        let payload: [String: Double] = [
+            "x": center.x,
+            "y": center.y
+        ]
+
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: payload
+        ) else {
+            return
+        }
+
+        try? data.write(
+            to: target,
+            options: .atomic
+        )
+    }
+
+    private func documentURL(
+        named name: String
+    ) -> URL? {
+        FileManager.default
+            .urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+            )
+            .first?
+            .appendingPathComponent(name)
     }
 }
