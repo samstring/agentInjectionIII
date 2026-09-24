@@ -76,6 +76,8 @@ private func printUsage() {
       injectionctl [--socket PATH] instances stop
       injectionctl [--socket PATH] tests read [LIMIT]
       injectionctl [--socket PATH] tests clear
+      injectionctl [--socket PATH] reorder-project preview [PROJECT.xcodeproj]
+      injectionctl [--socket PATH] reorder-project apply [PROJECT.xcodeproj]
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope frameworks [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope uikit [FILTER_REGEX]
@@ -486,6 +488,26 @@ case "tests":
     default:
         fatalUsage("tests requires read or clear.")
     }
+
+case "reorder-project":
+    guard options.arguments.count == 2 ||
+          options.arguments.count == 3 else {
+        fatalUsage("reorder-project requires preview|apply and optional PROJECT.xcodeproj.")
+    }
+
+    let mode = options.arguments[1]
+    guard mode == "preview" ||
+          mode == "apply" else {
+        fatalUsage("reorder-project requires preview or apply.")
+    }
+
+    request = ControlRequest(
+        action: .reorderProject,
+        path: options.arguments.count == 3
+            ? absolutePath(options.arguments[2])
+            : nil,
+        enabled: mode == "apply"
+    )
 
 case "trace":
     guard options.arguments.count >= 2 else {
