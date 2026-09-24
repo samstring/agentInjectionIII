@@ -6,6 +6,7 @@
 #import <netdb.h>
 #import <sys/socket.h>
 #import <unistd.h>
+#import <dlfcn.h>
 
 typedef void (^AgentSwiftTraceOutput)(
     NSString *text,
@@ -237,6 +238,41 @@ static BOOL AgentTraceOutputInstalled = NO;
 + (void)handleCommand:(NSDictionary *)command {
     NSString *action = command[@"action"];
 
+    if ([action isEqualToString:@"trace_scope"]) {
+        id rawFilter = command[@"filter"];
+        NSString *filter =
+            [rawFilter isKindOfClass:NSString.class]
+            ? rawFilter
+            : nil;
+
+        NSString *scope =
+            [command[@"scope"] isKindOfClass:NSString.class]
+            ? command[@"scope"]
+            : nil;
+
+        NSString *name =
+            [command[@"name"] isKindOfClass:NSString.class]
+            ? command[@"name"]
+            : nil;
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self setTraceFilter:filter];
+
+            NSString *error = nil;
+            if ([self startScope:scope
+                            name:name
+                           error:&error]) {
+                [self sendTraceState:@"started"
+                               error:nil];
+            } else {
+                [self sendTraceState:@"error"
+                               error:error
+                                     ?: @"Unable to start scoped trace."];
+            }
+        });
+        return;
+    }
+
     if ([action isEqualToString:@"trace_start"]) {
         id rawFilter = command[@"filter"];
         NSString *filter =
@@ -320,6 +356,237 @@ static BOOL AgentTraceOutputInstalled = NO;
             [self sendTraceState:@"stopped" error:nil];
         });
     }
+}
+
++ (BOOL)startScope:(NSString * _Nullable)scope
+                name:(NSString * _Nullable)name
+               error:(NSString * _Nullable * _Nullable)error {
+    Class traceClass = NSClassFromString(@"SwiftTrace");
+
+    if (!traceClass) {
+        if (error) {
+            *error = @"SwiftTrace class is unavailable.";
+        }
+        return NO;
+    }
+
+    if ([scope isEqualToString:@"frameworks"]) {
+        SEL selector =
+            NSSelectorFromString(@"swiftTraceFrameworkMethods");
+        if (![traceClass respondsToSelector:selector]) {
+            if (error) {
+                *error = @"swiftTraceFrameworkMethods is unavailable.";
+            }
+            return NO;
+        }
+
+        typedef NSInteger (*IntegerSend)(id, SEL);
+        ((IntegerSend)objc_msgSend)(
+            traceClass,
+            selector
+        );
+        return YES;
+    }
+
+    if ([scope isEqualToString:@"uikit"]) {
+        Class viewClass =
+            NSClassFromString(@"UIView")
+            ?: NSClassFromString(@"NSView");
+        SEL selector =
+            NSSelectorFromString(@"swiftTraceBundle");
+
+        if (!viewClass ||
+            ![viewClass respondsToSelector:selector]) {
+            if (error) {
+                *error = @"UIView/NSView SwiftTrace bundle API is unavailable.";
+            }
+            return NO;
+        }
+
+        typedef void (*VoidSend)(id, SEL);
+        ((VoidSend)objc_msgSend)(
+            viewClass,
+            selector
+        );
+        return YES;
+    }
+
+    if ([scope isEqualToString:@"swiftui"]) {
+        typedef const char *(*SwiftUIPath)(void);
+        SwiftUIPath pathFunction =
+            (SwiftUIPath)dlsym(
+                RTLD_DEFAULT,
+                "swiftUIBundlePath"
+            );
+
+        const char *path =
+            pathFunction ? pathFunction() : NULL;
+
+        if (!path) {
+            if (error) {
+                *error = @"SwiftUI runtime bundle was not found.";
+            }
+            return NO;
+        }
+
+        return [self traceBundlePath:path
+                         packageName:nil
+                              error:error];
+    }
+
+    if ([scope isEqualToString:@"package"]) {
+        if (name.length == 0) {
+            if (error) {
+                *error = @"package scope requires a package name.";
+            }
+            return NO;
+        }
+
+        const char *path =
+            NSBundle.mainBundle.executablePath.UTF8String;
+
+        return [self traceBundlePath:path
+                         packageName:name
+                              error:error];
+    }
+
+    if ([scope isEqualToString:@"framework"]) {
+        if (name.length == 0) {
+            if (error) {
+                *error = @"framework scope requires a framework name.";
+            }
+            return NO;
+        }
+
+        NSBundle *matched = nil;
+        for (NSBundle *bundle in NSBundle.allFrameworks) {
+            NSString *bundleName =
+                bundle.bundleURL
+                    .URLByDeletingPathExtension
+                    .lastPathComponent;
+
+            if ([bundleName isEqualToString:name] ||
+                [bundle.bundleIdentifier
+                    isEqualToString:name]) {
+                matched = bundle;
+                break;
+            }
+        }
+
+        if (!matched.executablePath) {
+            if (error) {
+                *error = [NSString
+                    stringWithFormat:
+                        @"Framework not loaded: %@",
+                        name];
+            }
+            return NO;
+        }
+
+        const char *path =
+            matched.executablePath.UTF8String;
+
+        if (![self traceBundlePath:path
+                       packageName:nil
+                            error:error]) {
+            return NO;
+        }
+
+        SEL bundleSelector =
+            NSSelectorFromString(
+                @"swiftTraceBundlePath:"
+            );
+
+        if ([traceClass
+                respondsToSelector:bundleSelector]) {
+            typedef void (*BundleSend)(
+                id,
+                SEL,
+                const char *
+            );
+            ((BundleSend)objc_msgSend)(
+                traceClass,
+                bundleSelector,
+                path
+            );
+        }
+
+        return YES;
+    }
+
+    if ([scope isEqualToString:@"main-all"]) {
+        SEL methods =
+            NSSelectorFromString(
+                @"swiftTraceMainBundleMethods"
+            );
+        SEL bundle =
+            NSSelectorFromString(
+                @"swiftTraceMainBundle"
+            );
+
+        if (![traceClass respondsToSelector:methods] ||
+            ![NSObject respondsToSelector:bundle]) {
+            if (error) {
+                *error = @"Main-bundle SwiftTrace APIs are unavailable.";
+            }
+            return NO;
+        }
+
+        typedef NSInteger (*IntegerSend)(id, SEL);
+        typedef void (*VoidSend)(id, SEL);
+
+        ((IntegerSend)objc_msgSend)(
+            traceClass,
+            methods
+        );
+        ((VoidSend)objc_msgSend)(
+            NSObject.class,
+            bundle
+        );
+        return YES;
+    }
+
+    if (error) {
+        *error = [NSString
+            stringWithFormat:
+                @"Unknown trace scope: %@",
+                scope ?: @"(null)"];
+    }
+    return NO;
+}
+
++ (BOOL)traceBundlePath:(const char *)path
+            packageName:(NSString * _Nullable)packageName
+                   error:(NSString * _Nullable * _Nullable)error {
+    Class traceClass = NSClassFromString(@"SwiftTrace");
+    SEL selector =
+        NSSelectorFromString(
+            @"swiftTraceMethodsInBundle:packageName:"
+        );
+
+    if (!traceClass ||
+        ![traceClass respondsToSelector:selector]) {
+        if (error) {
+            *error = @"swiftTraceMethodsInBundle:packageName: is unavailable.";
+        }
+        return NO;
+    }
+
+    typedef NSInteger (*BundleMethodsSend)(
+        id,
+        SEL,
+        const char *,
+        NSString *
+    );
+
+    ((BundleMethodsSend)objc_msgSend)(
+        traceClass,
+        selector,
+        path,
+        packageName
+    );
+
+    return YES;
 }
 
 + (void)sendTraceState:(NSString *)state
