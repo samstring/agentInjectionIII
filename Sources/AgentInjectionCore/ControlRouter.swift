@@ -83,6 +83,12 @@ public final class ControlRouter {
                 results: result.results,
                 error: result.error
             )
+
+        case .doctor:
+            return .doctor(
+                id: request.id,
+                report: backend.doctor(path: request.path)
+            )
         }
     }
 }
