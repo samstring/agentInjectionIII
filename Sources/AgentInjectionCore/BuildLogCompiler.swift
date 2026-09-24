@@ -391,7 +391,7 @@ public final class BuildLogCompiler {
         object: String
     ) -> String {
         var command = original
-        let escapedSource = regexEscapeShellPath(source)
+        let escapedSource = shellEscapePath(source)
 
         command = replacingRegex(
             " -o \(quotedArgumentRegex)",
@@ -410,7 +410,7 @@ public final class BuildLogCompiler {
         )
 
         command = replacingRegex(
-            " -primary-file \(argumentRegex)",
+            " -primary-file \(quotedArgumentRegex)",
             in: command,
             with: " "
         )
@@ -576,10 +576,6 @@ public final class BuildLogCompiler {
         }
 
         return String(value[range])
-    }
-
-    private func regexEscapeShellPath(_ path: String) -> String {
-        NSRegularExpression.escapedPattern(for: shellEscapePath(path))
     }
 
     private func shellEscapePath(_ path: String) -> String {
