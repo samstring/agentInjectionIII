@@ -61,7 +61,10 @@ public final class ControlRouter {
                 )
             }
 
-            let result = backend.inject(files: files)
+            let result = backend.inject(
+                files: files,
+                target: request.target
+            )
             return .injection(
                 id: request.id,
                 results: result.results,
@@ -77,7 +80,10 @@ public final class ControlRouter {
                 )
             }
 
-            let result = backend.loadDylib(path: path)
+            let result = backend.loadDylib(
+                path: path,
+                target: request.target
+            )
             return .injection(
                 id: request.id,
                 results: result.results,
@@ -91,7 +97,10 @@ public final class ControlRouter {
             )
 
         case .screenshot:
-            switch backend.screenshot(path: request.path) {
+            switch backend.screenshot(
+                path: request.path,
+                target: request.target
+            ) {
             case .success(let result):
                 return .screenshot(
                     id: request.id,
@@ -104,6 +113,88 @@ public final class ControlRouter {
                     message: error.message
                 )
             }
+
+        case .targets:
+            return .targets(
+                id: request.id,
+                result: backend.targets()
+            )
+
+        case .touchCapture:
+            switch backend.touchCapture(
+                target: request.target
+            ) {
+            case .success(let result):
+                return .touch(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .touchRead:
+            switch backend.touchRead(
+                target: request.target
+            ) {
+            case .success(let result):
+                return .touch(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .touchReplay:
+            guard let payload = request.payload,
+                  !payload.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_PAYLOAD",
+                    message: "touch_replay requires a JSON payload."
+                )
+            }
+
+            switch backend.touchReplay(
+                payload: payload,
+                target: request.target
+            ) {
+            case .success(let result):
+                return .touch(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .logs:
+            return .logs(
+                id: request.id,
+                result: backend.logs(
+                    since: request.since,
+                    limit: request.limit
+                )
+            )
+
+        case .clearLogs:
+            return .logs(
+                id: request.id,
+                result: backend.clearLogs()
+            )
 
         case .traceStart:
             switch backend.traceStart(filter: request.filter) {
