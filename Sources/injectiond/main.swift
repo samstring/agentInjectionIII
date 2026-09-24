@@ -89,7 +89,7 @@ do {
     exit(1)
 }
 
-let backend = HeadlessInjectionBackend(
+let backend = InjectionNextRuntimeBackend(
     runtimeServer: runtimeServer,
     projectRoot: options.projectRoot,
     derivedDataRoot: options.derivedDataRoot
