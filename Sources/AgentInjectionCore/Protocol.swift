@@ -35,6 +35,9 @@ public enum ControlAction: String, Codable, Sendable {
     case testResults = "test_results"
     case clearTestResults = "clear_test_results"
     case reorderProject = "reorder_project"
+    case xprobeSearch = "xprobe_search"
+    case xprobeInspect = "xprobe_inspect"
+    case eval
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -51,6 +54,7 @@ public struct ControlRequest: Codable, Sendable {
     public let scope: String?
     public let name: String?
     public let enabled: Bool?
+    public let objectID: Int?
 
     public init(
         id: String = UUID().uuidString,
@@ -65,7 +69,8 @@ public struct ControlRequest: Codable, Sendable {
         environment: [String: String?]? = nil,
         scope: String? = nil,
         name: String? = nil,
-        enabled: Bool? = nil
+        enabled: Bool? = nil,
+        objectID: Int? = nil
     ) {
         self.id = id
         self.action = action
@@ -80,6 +85,7 @@ public struct ControlRequest: Codable, Sendable {
         self.scope = scope
         self.name = name
         self.enabled = enabled
+        self.objectID = objectID
     }
 }
 
@@ -503,6 +509,66 @@ public struct TestResultsResult: Codable, Sendable {
     }
 }
 
+public struct XprobeObject: Codable, Sendable, Equatable {
+    public let id: Int
+    public let path: String?
+    public let className: String
+    public let description: String
+
+    public init(
+        id: Int,
+        path: String? = nil,
+        className: String,
+        description: String
+    ) {
+        self.id = id
+        self.path = path
+        self.className = className
+        self.description = description
+    }
+}
+
+public struct XprobeResult: Codable, Sendable {
+    public let available: Bool
+    public let objects: [XprobeObject]
+    public let selected: XprobeObject?
+    public let details: String?
+    public let error: String?
+
+    public init(
+        available: Bool,
+        objects: [XprobeObject] = [],
+        selected: XprobeObject? = nil,
+        details: String? = nil,
+        error: String? = nil
+    ) {
+        self.available = available
+        self.objects = objects
+        self.selected = selected
+        self.details = details
+        self.error = error
+    }
+}
+
+public struct EvalResult: Codable, Sendable {
+    public let available: Bool
+    public let objectID: Int
+    public let succeeded: Bool
+    public let error: String?
+
+    public init(
+        available: Bool,
+        objectID: Int,
+        succeeded: Bool,
+        error: String? = nil
+    ) {
+        self.available = available
+        self.objectID = objectID
+        self.succeeded = succeeded
+        self.error = error
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -586,6 +652,8 @@ public struct ControlResponse: Codable, Sendable {
     public let instances: InstanceCountsResult?
     public let tests: TestResultsResult?
     public let reorder: ProjectReorderPlan?
+    public let xprobe: XprobeResult?
+    public let eval: EvalResult?
     public let error: ControlError?
 
     public init(
@@ -608,6 +676,8 @@ public struct ControlResponse: Codable, Sendable {
         instances: InstanceCountsResult? = nil,
         tests: TestResultsResult? = nil,
         reorder: ProjectReorderPlan? = nil,
+        xprobe: XprobeResult? = nil,
+        eval: EvalResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -629,6 +699,8 @@ public struct ControlResponse: Codable, Sendable {
         self.instances = instances
         self.tests = tests
         self.reorder = reorder
+        self.xprobe = xprobe
+        self.eval = eval
         self.error = error
     }
 
@@ -817,6 +889,45 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             reorder: result
+        )
+    }
+
+    public static func xprobe(
+        id: String,
+        result: XprobeResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: result.error == nil,
+            xprobe: result,
+            error: result.error.map {
+                ControlError(
+                    code: result.available
+                        ? "XPROBE_FAILED"
+                        : "XPROBE_UNAVAILABLE",
+                    message: $0
+                )
+            }
+        )
+    }
+
+    public static func eval(
+        id: String,
+        result: EvalResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: result.succeeded,
+            eval: result,
+            error: result.succeeded
+                ? nil
+                : ControlError(
+                    code: result.available
+                        ? "EVAL_FAILED"
+                        : "XPROBE_UNAVAILABLE",
+                    message: result.error
+                        ?? "Eval failed."
+                )
         )
     }
 
