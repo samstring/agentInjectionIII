@@ -40,13 +40,17 @@ jobs:
           set -euo pipefail
 
           UDID="$(
-            xcrun simctl list devices available |
-            awk '/iPhone/ && /Shutdown|Booted/ {
-              if (match($0, /\(([0-9A-F-]{36})\)/, m)) {
-                print m[1]
-                exit
-              }
-            }'
+            xcrun simctl list devices available -j |
+            python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for devices in data.get("devices", {}).values():
+    for device in devices:
+        if device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
+            print(device["udid"])
+            raise SystemExit(0)
+raise SystemExit(1)
+'
           )"
 
           if [ -z "$UDID" ]; then
