@@ -154,17 +154,45 @@ public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
     public let injected: Bool
+    public let compileMilliseconds: Double?
+    public let linkMilliseconds: Double?
     public let message: String?
 
     public init(
         file: String,
         compiled: Bool,
         injected: Bool,
+        compileMilliseconds: Double? = nil,
+        linkMilliseconds: Double? = nil,
         message: String? = nil
     ) {
         self.file = file
         self.compiled = compiled
         self.injected = injected
+        self.compileMilliseconds = compileMilliseconds
+        self.linkMilliseconds = linkMilliseconds
+        self.message = message
+    }
+}
+
+public struct CompilerDiagnostic: Codable, Sendable {
+    public let file: String?
+    public let line: Int?
+    public let column: Int?
+    public let severity: String
+    public let message: String
+
+    public init(
+        file: String? = nil,
+        line: Int? = nil,
+        column: Int? = nil,
+        severity: String,
+        message: String
+    ) {
+        self.file = file
+        self.line = line
+        self.column = column
+        self.severity = severity
         self.message = message
     }
 }
@@ -172,10 +200,16 @@ public struct InjectionResult: Codable, Sendable {
 public struct ControlError: Codable, Error, Sendable {
     public let code: String
     public let message: String
+    public let diagnostics: [CompilerDiagnostic]?
 
-    public init(code: String, message: String) {
+    public init(
+        code: String,
+        message: String,
+        diagnostics: [CompilerDiagnostic]? = nil
+    ) {
         self.code = code
         self.message = message
+        self.diagnostics = diagnostics
     }
 }
 
