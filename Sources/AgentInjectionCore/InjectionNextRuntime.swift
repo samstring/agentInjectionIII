@@ -839,6 +839,7 @@ private final class InjectionRuntimeClient {
 
 public final class InjectionNextRuntimeServer {
     public let port: UInt16
+    public let devicesEnabled: Bool
 
     private let queue = DispatchQueue(
         label: "agentInjectionIII.runtime-server",
@@ -846,18 +847,31 @@ public final class InjectionNextRuntimeServer {
         attributes: .concurrent
     )
     private let stateLock = NSLock()
+    private let logStore: AgentLogStore
+    private let discovery: InjectionDeviceDiscovery?
 
     private var listenerFD: Int32 = -1
-    private var currentClient: InjectionRuntimeClient?
+    private var clients: [String: InjectionRuntimeClient] = [:]
+    private var clientOrder: [String] = []
 
-    public init(port: UInt16 = 8887) {
+    public init(
+        port: UInt16 = 8887,
+        devicesEnabled: Bool = false,
+        logStore: AgentLogStore = AgentLogStore()
+    ) {
         self.port = port
+        self.devicesEnabled = devicesEnabled
+        self.logStore = logStore
+        self.discovery = devicesEnabled
+            ? InjectionDeviceDiscovery(port: port)
+            : nil
     }
 
     deinit {
         if listenerFD >= 0 {
             Darwin.close(listenerFD)
         }
+        discovery?.stop()
     }
 
     public func start() throws {
@@ -880,7 +894,9 @@ public final class InjectionNextRuntimeServer {
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = port.bigEndian
         address.sin_addr = in_addr(
-            s_addr: inet_addr("127.0.0.1")
+            s_addr: devicesEnabled
+                ? htonl(INADDR_ANY)
+                : inet_addr("127.0.0.1")
         )
 
         let bindResult = withUnsafePointer(to: &address) {
@@ -898,13 +914,14 @@ public final class InjectionNextRuntimeServer {
 
         guard bindResult == 0 else {
             Darwin.close(fd)
+            let host = devicesEnabled ? "0.0.0.0" : "127.0.0.1"
             throw ControlError(
                 code: "RUNTIME_BIND_FAILED",
-                message: "Unable to bind 127.0.0.1:\(port): \(String(cString: strerror(errno)))"
+                message: "Unable to bind \(host):\(port): \(String(cString: strerror(errno)))"
             )
         }
 
-        guard Darwin.listen(fd, 8) == 0 else {
+        guard Darwin.listen(fd, 16) == 0 else {
             Darwin.close(fd)
             throw ControlError(
                 code: "RUNTIME_LISTEN_FAILED",
@@ -914,77 +931,325 @@ public final class InjectionNextRuntimeServer {
 
         listenerFD = fd
 
+        if devicesEnabled {
+            try discovery?.start()
+            logStore.append(
+                "Device injection enabled; TCP/UDP listening on :\(port)."
+            )
+        }
+
         queue.async { [weak self] in
             self?.acceptLoop()
         }
     }
 
-    public func status() -> InjectionRuntimeStatus {
-        stateLock.lock()
-        let client = currentClient
-        stateLock.unlock()
-
-        return client?.status()
-            ?? InjectionRuntimeStatus(connected: false)
+    public func status(
+        target id: String? = nil
+    ) -> InjectionRuntimeStatus {
+        guard let client = client(target: id) else {
+            return InjectionRuntimeStatus(
+                connected: false,
+                isLocal: true
+            )
+        }
+        return client.status()
     }
 
-    public func loadDylib(path: String) -> InjectionResult {
+    public func targets() -> [RuntimeTarget] {
         stateLock.lock()
-        let client = currentClient
+        let ordered = clientOrder.compactMap {
+            clients[$0]
+        }
         stateLock.unlock()
 
-        guard let client else {
+        return ordered.compactMap {
+            $0.status().target
+        }
+    }
+
+    public func loadDylib(
+        path: String,
+        target id: String? = nil
+    ) -> InjectionResult {
+        guard let client = client(target: id) else {
             return InjectionResult(
                 file: path,
                 compiled: true,
                 injected: false,
-                message: "No InjectionNext runtime is connected."
+                message: id == nil
+                    ? "No InjectionNext runtime is connected."
+                    : "Target not found: \(id!)"
             )
         }
 
-        return client.loadDylib(sourcePath: path)
+        return client.loadDylib(
+            sourcePath: path
+        )
     }
 
-    public func requestScreenshot()
-        -> (mimeType: String, data: Data)? {
-        stateLock.lock()
-        let client = currentClient
-        stateLock.unlock()
+    public func requestScreenshot(
+        target id: String? = nil
+    ) -> (mimeType: String, data: Data)? {
+        client(target: id)?
+            .requestScreenshot()
+    }
 
-        return client?.requestScreenshot()
+    public func captureTouchEvents(
+        target id: String? = nil
+    ) -> Result<TouchResult, ControlError> {
+        guard let client = client(target: id) else {
+            return .failure(
+                ControlError(
+                    code: "TARGET_NOT_FOUND",
+                    message: id == nil
+                        ? "No connected runtime target."
+                        : "Target not found: \(id!)"
+                )
+            )
+        }
+
+        do {
+            try client.captureTouchEvents()
+            return .success(
+                TouchResult(
+                    target: client.id,
+                    events: []
+                )
+            )
+        } catch let error as ControlError {
+            return .failure(error)
+        } catch {
+            return .failure(
+                ControlError(
+                    code: "TOUCH_CAPTURE_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+    }
+
+    public func drainTouchEvents(
+        target id: String? = nil
+    ) -> Result<TouchResult, ControlError> {
+        guard let client = client(target: id) else {
+            return .failure(
+                ControlError(
+                    code: "TARGET_NOT_FOUND",
+                    message: id == nil
+                        ? "No connected runtime target."
+                        : "Target not found: \(id!)"
+                )
+            )
+        }
+
+        return .success(
+            TouchResult(
+                target: client.id,
+                events: client.drainTouchEvents()
+            )
+        )
+    }
+
+    public func replayTouchEvents(
+        _ payload: String,
+        target id: String? = nil
+    ) -> Result<TouchResult, ControlError> {
+        guard let client = client(target: id) else {
+            return .failure(
+                ControlError(
+                    code: "TARGET_NOT_FOUND",
+                    message: id == nil
+                        ? "No connected runtime target."
+                        : "Target not found: \(id!)"
+                )
+            )
+        }
+
+        guard client.replayTouchEvents(payload) else {
+            return .failure(
+                ControlError(
+                    code: "TOUCH_REPLAY_FAILED",
+                    message: "Runtime did not confirm touch replay."
+                )
+            )
+        }
+
+        var replayed: Int?
+        if let data = payload.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(
+                with: data
+           ) as? [String: Any],
+           let events = object["events"] as? [Any] {
+            replayed = events.count
+        }
+
+        return .success(
+            TouchResult(
+                target: client.id,
+                replayed: replayed
+            )
+        )
+    }
+
+    public func logs(
+        since: Double?,
+        limit: Int?
+    ) -> LogsResult {
+        logStore.get(
+            since: since,
+            limit: limit
+        )
+    }
+
+    public func clearLogs() -> LogsResult {
+        logStore.clear()
+    }
+
+    private func client(
+        target id: String?
+    ) -> InjectionRuntimeClient? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        if let id {
+            return clients[id]
+        }
+
+        for id in clientOrder.reversed() {
+            if let client = clients[id],
+               client.status().connected {
+                return client
+            }
+        }
+
+        return nil
     }
 
     private func acceptLoop() {
         while listenerFD >= 0 {
-            let fd = Darwin.accept(listenerFD, nil, nil)
+            var peer = sockaddr_storage()
+            var peerLength = socklen_t(
+                MemoryLayout<sockaddr_storage>.size
+            )
+
+            let fd = withUnsafeMutablePointer(
+                to: &peer
+            ) {
+                $0.withMemoryRebound(
+                    to: sockaddr.self,
+                    capacity: 1
+                ) {
+                    Darwin.accept(
+                        listenerFD,
+                        $0,
+                        &peerLength
+                    )
+                }
+            }
+
             if fd < 0 {
                 if errno == EINTR { continue }
                 continue
             }
 
-            let client = InjectionRuntimeClient(fd: fd)
+            let peerInfo = Self.peerInfo(peer)
+            let client = InjectionRuntimeClient(
+                fd: fd,
+                peerAddress: peerInfo.address,
+                isLocal: peerInfo.local,
+                logStore: logStore
+            )
 
             do {
                 try client.validate()
             } catch {
+                logStore.append(
+                    "Rejected runtime connection from \(peerInfo.address): \(error)",
+                    level: "warning"
+                )
                 continue
             }
 
             stateLock.lock()
-            currentClient = client
+            clients[client.id] = client
+            clientOrder.removeAll {
+                $0 == client.id
+            }
+            clientOrder.append(client.id)
             stateLock.unlock()
+
+            logStore.append(
+                "Runtime connected: target=\(client.id) peer=\(peerInfo.address) local=\(peerInfo.local)"
+            )
 
             queue.async { [weak self, weak client] in
                 guard let self, let client else { return }
                 client.processResponses {
                     self.stateLock.lock()
-                    if self.currentClient === client {
-                        self.currentClient = nil
+                    self.clients.removeValue(
+                        forKey: client.id
+                    )
+                    self.clientOrder.removeAll {
+                        $0 == client.id
                     }
                     self.stateLock.unlock()
                 }
             }
         }
+    }
+
+    private static func peerInfo(
+        _ storage: sockaddr_storage
+    ) -> (address: String, local: Bool) {
+        var storage = storage
+        var host = [CChar](
+            repeating: 0,
+            count: Int(NI_MAXHOST)
+        )
+
+        let length: socklen_t
+        switch Int32(storage.ss_family) {
+        case AF_INET:
+            length = socklen_t(
+                MemoryLayout<sockaddr_in>.size
+            )
+        case AF_INET6:
+            length = socklen_t(
+                MemoryLayout<sockaddr_in6>.size
+            )
+        default:
+            return ("unknown", false)
+        }
+
+        let result = withUnsafePointer(
+            to: &storage
+        ) {
+            $0.withMemoryRebound(
+                to: sockaddr.self,
+                capacity: 1
+            ) {
+                getnameinfo(
+                    $0,
+                    length,
+                    &host,
+                    socklen_t(host.count),
+                    nil,
+                    0,
+                    NI_NUMERICHOST
+                )
+            }
+        }
+
+        guard result == 0 else {
+            return ("unknown", false)
+        }
+
+        let address = String(cString: host)
+        let local =
+            address == "127.0.0.1" ||
+            address == "::1"
+
+        return (address, local)
     }
 }
 
