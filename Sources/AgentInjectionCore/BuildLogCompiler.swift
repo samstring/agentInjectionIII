@@ -15,6 +15,15 @@ public final class BuildLogCompiler {
         public let linkMilliseconds: Double
     }
 
+    public struct Diagnostics: Sendable {
+        public let derivedDataRoot: String
+        public let buildLogCount: Int
+        public let newestBuildLog: String?
+        public let source: String?
+        public let sourceExists: Bool?
+        public let compileCommandFound: Bool?
+    }
+
     private struct CachedCommand: Codable {
         let command: String
         let logPath: String
@@ -38,6 +47,52 @@ public final class BuildLogCompiler {
     ) {
         self.projectRoot = projectRoot
         self.derivedDataRoot = derivedDataRoot
+    }
+
+    public func diagnostics(
+        source: String? = nil,
+        platform: String? = nil
+    ) -> Diagnostics {
+        let logs = buildLogsNewestFirst()
+        let root: String
+        if let derivedDataRoot {
+            root = NSString(
+                string: derivedDataRoot
+            ).expandingTildeInPath
+        } else {
+            root = fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Developer/Xcode/DerivedData")
+                .path
+        }
+
+        guard let source else {
+            return Diagnostics(
+                derivedDataRoot: root,
+                buildLogCount: logs.count,
+                newestBuildLog: logs.first?.path,
+                source: nil,
+                sourceExists: nil,
+                compileCommandFound: nil
+            )
+        }
+
+        let normalized = standardized(source)
+        let exists = fileManager.fileExists(atPath: normalized)
+        let command = exists
+            ? locateCompilationCommand(
+                source: normalized,
+                platform: platform ?? ""
+            )
+            : nil
+
+        return Diagnostics(
+            derivedDataRoot: root,
+            buildLogCount: logs.count,
+            newestBuildLog: logs.first?.path,
+            source: normalized,
+            sourceExists: exists,
+            compileCommandFound: command != nil
+        )
     }
 
     public func compileAndLink(
