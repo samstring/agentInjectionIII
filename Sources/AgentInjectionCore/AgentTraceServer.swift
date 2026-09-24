@@ -24,6 +24,9 @@ public final class AgentTraceServer {
     private var activeFilter: String?
     private var pendingCommand: PendingTraceCommand?
     private var pendingProfile: PendingProfileCommand?
+    private var pendingCallOrder: PendingCallOrderCommand?
+    private var pendingInstances: PendingInstancesCommand?
+    private var lifetimeActive = false
 
     private let maximumBufferedEvents = 10_000
 
@@ -383,6 +386,333 @@ public final class AgentTraceServer {
         return .success(result)
     }
 
+    public func callOrderSnapshot()
+        -> Result<CallOrderResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingCallOrderCommand()
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingCallOrder == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "CALL_ORDER_BUSY",
+                    message: "Another call-order request is pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingCallOrder = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "call_order",
+                filter: nil
+            )
+        } catch {
+            clearCallOrderPending(pending)
+            return .failure(
+                ControlError(
+                    code: "CALL_ORDER_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 10
+        ) == .success else {
+            clearCallOrderPending(pending)
+            return .failure(
+                ControlError(
+                    code: "CALL_ORDER_TIMEOUT",
+                    message: "Timed out waiting for runtime call order."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearCallOrderPending(pending)
+            return .failure(
+                ControlError(
+                    code: "CALL_ORDER_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        let signatures = pending.signatures ?? []
+        clearCallOrderPending(pending)
+
+        return .success(
+            CallOrderResult(
+                signatures: signatures
+            )
+        )
+    }
+
+    public func instancesStart()
+        -> Result<InstanceCountsResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingTraceCommand(
+            expectedState: "instances_started"
+        )
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingCommand == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_BUSY",
+                    message: "Another trace/lifetime command is pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingCommand = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "instances_start",
+                filter: nil
+            )
+        } catch {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_TRACKING_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 20
+        ) == .success else {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_TRACKING_TIMEOUT",
+                    message: "Timed out waiting for lifetime tracking to start."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_TRACKING_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        clearPending(pending)
+        lock.lock()
+        lifetimeActive = true
+        lock.unlock()
+
+        return .success(
+            InstanceCountsResult(
+                active: true,
+                counts: []
+            )
+        )
+    }
+
+    public func instancesRead()
+        -> Result<InstanceCountsResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingInstancesCommand()
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingInstances == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_READ_BUSY",
+                    message: "Another instance-count request is pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingInstances = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "instances_read",
+                filter: nil
+            )
+        } catch {
+            clearInstancesPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_READ_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 10
+        ) == .success else {
+            clearInstancesPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_READ_TIMEOUT",
+                    message: "Timed out waiting for instance counts."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearInstancesPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_READ_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        let counts = (pending.counts ?? [:])
+            .map {
+                InstanceCount(
+                    type: $0.key,
+                    count: $0.value
+                )
+            }
+            .sorted {
+                $0.count == $1.count
+                    ? $0.type < $1.type
+                    : $0.count > $1.count
+            }
+
+        lock.lock()
+        let active = lifetimeActive
+        lock.unlock()
+        clearInstancesPending(pending)
+
+        return .success(
+            InstanceCountsResult(
+                active: active,
+                counts: counts
+            )
+        )
+    }
+
+    public func instancesStop()
+        -> Result<InstanceCountsResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingTraceCommand(
+            expectedState: "instances_stopped"
+        )
+
+        lock.lock()
+        guard let connected = client else {
+            lifetimeActive = false
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingCommand == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_BUSY",
+                    message: "Another trace/lifetime command is pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingCommand = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "instances_stop",
+                filter: nil
+            )
+        } catch {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_TRACKING_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 10
+        ) == .success else {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_TRACKING_TIMEOUT",
+                    message: "Timed out waiting for lifetime tracking to stop."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "INSTANCE_TRACKING_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        clearPending(pending)
+        lock.lock()
+        lifetimeActive = false
+        lock.unlock()
+
+        return .success(
+            InstanceCountsResult(
+                active: false,
+                counts: []
+            )
+        )
+    }
+
     public func profileSnapshot(
         limit: Int?
     ) -> Result<ProfileResult, ControlError> {
@@ -570,6 +900,17 @@ public final class AgentTraceServer {
                         self.pendingProfile = nil
                         profile.semaphore.signal()
                     }
+                    if let order = self.pendingCallOrder {
+                        order.error = "AgentTraceBridge disconnected."
+                        self.pendingCallOrder = nil
+                        order.semaphore.signal()
+                    }
+                    if let instances = self.pendingInstances {
+                        instances.error = "AgentTraceBridge disconnected."
+                        self.pendingInstances = nil
+                        instances.semaphore.signal()
+                    }
+                    self.lifetimeActive = false
                 }
                 self.lock.unlock()
             }
@@ -579,6 +920,31 @@ public final class AgentTraceServer {
     private func handle(
         _ message: TraceBridgeMessage
     ) {
+        if message.type == "call_order" {
+            lock.lock()
+            let pending = pendingCallOrder
+            if let pending {
+                pending.signatures =
+                    message.signatures
+                pendingCallOrder = nil
+                pending.semaphore.signal()
+            }
+            lock.unlock()
+            return
+        }
+
+        if message.type == "instance_counts" {
+            lock.lock()
+            let pending = pendingInstances
+            if let pending {
+                pending.counts = message.counts
+                pendingInstances = nil
+                pending.semaphore.signal()
+            }
+            lock.unlock()
+            return
+        }
+
         if message.type == "profile" {
             lock.lock()
             let pending = pendingProfile
@@ -616,6 +982,20 @@ public final class AgentTraceServer {
                 pendingProfile = nil
                 profile.semaphore.signal()
             }
+            if message.state == "error",
+               let order = pendingCallOrder {
+                order.error = message.error
+                    ?? "Trace bridge reported an unknown error."
+                pendingCallOrder = nil
+                order.semaphore.signal()
+            }
+            if message.state == "error",
+               let instances = pendingInstances {
+                instances.error = message.error
+                    ?? "Trace bridge reported an unknown error."
+                pendingInstances = nil
+                instances.semaphore.signal()
+            }
 
             lock.unlock()
             return
@@ -640,6 +1020,26 @@ public final class AgentTraceServer {
         lock.lock()
         if pendingProfile === pending {
             pendingProfile = nil
+        }
+        lock.unlock()
+    }
+
+    private func clearCallOrderPending(
+        _ pending: PendingCallOrderCommand
+    ) {
+        lock.lock()
+        if pendingCallOrder === pending {
+            pendingCallOrder = nil
+        }
+        lock.unlock()
+    }
+
+    private func clearInstancesPending(
+        _ pending: PendingInstancesCommand
+    ) {
+        lock.lock()
+        if pendingInstances === pending {
+            pendingInstances = nil
         }
         lock.unlock()
     }
@@ -673,6 +1073,18 @@ public final class AgentTraceServer {
     }
 }
 
+private final class PendingCallOrderCommand {
+    let semaphore = DispatchSemaphore(value: 0)
+    var signatures: [String]?
+    var error: String?
+}
+
+private final class PendingInstancesCommand {
+    let semaphore = DispatchSemaphore(value: 0)
+    var counts: [String: Int]?
+    var error: String?
+}
+
 private final class PendingProfileCommand {
     let semaphore = DispatchSemaphore(value: 0)
     var elapsed: [String: Double]?
@@ -699,6 +1111,8 @@ private struct TraceBridgeMessage: Decodable {
     let error: String?
     let elapsed: [String: Double]?
     let invocations: [String: Int]?
+    let signatures: [String]?
+    let counts: [String: Int]?
 }
 
 private struct TraceBridgeCommand: Encodable {
