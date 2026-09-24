@@ -1,4 +1,5 @@
 #import "AgentInjectionBootstrap.h"
+#import "AgentTraceBridge.h"
 
 @implementation AgentInjectionBootstrap
 
