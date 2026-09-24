@@ -31,6 +31,7 @@ public protocol InjectionBackend: AnyObject {
     func lastError() -> LastErrorResult
     func events(limit: Int?) -> InjectionEventsResult
     func clearEvents() -> InjectionEventsResult
+    func profileSnapshot(limit: Int?) -> Result<ProfileResult, ControlError>
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
@@ -245,6 +246,17 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
     public func clearEvents()
         -> InjectionEventsResult {
         InjectionEventsResult(events: [])
+    }
+
+    public func profileSnapshot(
+        limit: Int?
+    ) -> Result<ProfileResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "PROFILE_NOT_READY",
+                message: "Scaffold backend has no profiling bridge."
+            )
+        )
     }
 
     public func traceStart(
