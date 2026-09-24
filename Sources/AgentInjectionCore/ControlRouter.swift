@@ -313,6 +313,23 @@ public final class ControlRouter {
                 result: backend.clearEvents()
             )
 
+        case .profileSnapshot:
+            switch backend.profileSnapshot(
+                limit: request.limit
+            ) {
+            case .success(let result):
+                return .profile(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .traceStart:
             switch backend.traceStart(filter: request.filter) {
             case .success(let result):
