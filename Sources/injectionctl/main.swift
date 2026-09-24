@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import AgentInjectionCore
 
-private struct CLIOptions {
+struct CLIOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"
     var target: String?
     var arguments: [String] = []
