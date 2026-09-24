@@ -1459,7 +1459,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "runtime-env",
                 "call-order",
                 "instance-counts",
-                "compiler-interception"
+                "compiler-interception",
+                "xctest-results"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -2159,6 +2160,19 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public func instancesStop()
         -> Result<InstanceCountsResult, ControlError> {
         traceServer.instancesStop()
+    }
+
+    public func testResults(
+        limit: Int?
+    ) -> TestResultsResult {
+        traceServer.injectedTestResults(
+            limit: limit
+        )
+    }
+
+    public func clearTestResults()
+        -> TestResultsResult {
+        traceServer.clearInjectedTestResults()
     }
 
     public func traceStop()
