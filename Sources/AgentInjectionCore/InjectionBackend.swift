@@ -14,6 +14,7 @@ public protocol InjectionBackend: AnyObject {
     var name: String { get }
     func status() -> BackendStatus
     func inject(files: [String]) -> BackendInjectionResponse
+    func loadDylib(path: String) -> BackendInjectionResponse
 }
 
 /// Phase-1 backend.
@@ -58,6 +59,24 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             error: ControlError(
                 code: "BACKEND_NOT_READY",
                 message: "Injection engine is not connected yet."
+            )
+        )
+    }
+
+    public func loadDylib(path: String) -> BackendInjectionResponse {
+        let normalized = normalize(path: path)
+        return BackendInjectionResponse(
+            results: [
+                InjectionResult(
+                    file: normalized,
+                    compiled: true,
+                    injected: false,
+                    message: "Runtime bridge is not connected yet."
+                )
+            ],
+            error: ControlError(
+                code: "RUNTIME_NOT_READY",
+                message: "Injection runtime bridge is not connected yet."
             )
         )
     }
