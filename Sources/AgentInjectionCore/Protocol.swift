@@ -16,6 +16,11 @@ public enum ControlAction: String, Codable, Sendable {
     case logs
     case clearLogs = "clear_logs"
     case unhideSymbols = "unhide_symbols"
+    case prepareSwiftUISource = "prepare_swiftui_source"
+    case prepareSwiftUIProject = "prepare_swiftui_project"
+    case setXcodePath = "set_xcode_path"
+    case launchXcode = "launch_xcode"
+    case getLastError = "get_last_error"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -297,6 +302,19 @@ public struct OperationResult: Codable, Sendable {
     }
 }
 
+public struct LastErrorResult: Codable, Sendable {
+    public let source: String?
+    public let error: ControlError?
+
+    public init(
+        source: String? = nil,
+        error: ControlError? = nil
+    ) {
+        self.source = source
+        self.error = error
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -372,6 +390,7 @@ public struct ControlResponse: Codable, Sendable {
     public let touch: TouchResult?
     public let logs: LogsResult?
     public let operation: OperationResult?
+    public let lastError: LastErrorResult?
     public let error: ControlError?
 
     public init(
@@ -386,6 +405,7 @@ public struct ControlResponse: Codable, Sendable {
         touch: TouchResult? = nil,
         logs: LogsResult? = nil,
         operation: OperationResult? = nil,
+        lastError: LastErrorResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -399,6 +419,7 @@ public struct ControlResponse: Codable, Sendable {
         self.touch = touch
         self.logs = logs
         self.operation = operation
+        self.lastError = lastError
         self.error = error
     }
 
@@ -499,6 +520,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             operation: result
+        )
+    }
+
+    public static func lastError(
+        id: String,
+        result: LastErrorResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            lastError: result
         )
     }
 
