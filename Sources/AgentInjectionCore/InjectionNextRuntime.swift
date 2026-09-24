@@ -1562,6 +1562,14 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                                 source: source
                             )
                         }
+                        eventStore.append(
+                            phase: "failed",
+                            source: source,
+                            target: targetID,
+                            message: error.message,
+                            compileMilliseconds: artifact.compileMilliseconds,
+                            linkMilliseconds: artifact.linkMilliseconds
+                        )
                         results.append(
                             InjectionResult(
                                 file: source,
