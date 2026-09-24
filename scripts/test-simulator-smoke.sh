@@ -22,13 +22,16 @@ TOUCH_REPLAY_JSON="$ARTIFACTS/touch-replay.json"
 TRACE_START_JSON="$ARTIFACTS/trace-start.json"
 TRACE_READ_JSON="$ARTIFACTS/trace-read.json"
 TRACE_STOP_JSON="$ARTIFACTS/trace-stop.json"
+PROFILE_JSON="$ARTIFACTS/profile.json"
+CALL_ORDER_JSON="$ARTIFACTS/call-order.json"
 
 mkdir -p "$ARTIFACTS"
 rm -rf "$DERIVED"
 rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" \
   "$STATUS_JSON" "$INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
   "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON" \
-  "$TRACE_START_JSON" "$TRACE_READ_JSON" "$TRACE_STOP_JSON"
+  "$TRACE_START_JSON" "$TRACE_READ_JSON" "$TRACE_STOP_JSON" \
+  "$PROFILE_JSON" "$CALL_ORDER_JSON"
 
 DAEMON_PID=""
 UDID="${SMOKE_UDID:-}"
@@ -535,6 +538,64 @@ if [ "$trace_seen" != "1" ]; then
   exit 1
 fi
 
+echo "==> Verify SwiftTrace profile snapshot"
+"$CTL" --socket "$SOCKET" profile 100 |
+  tee "$PROFILE_JSON"
+
+python3 - "$PROFILE_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+profile = data.get("profile") or {}
+stats = profile.get("stats") or []
+matched = any(
+    "tracePulse" in (stat.get("method") or "")
+    or "SmokeViewController" in (stat.get("method") or "")
+    for stat in stats
+)
+ok = bool(
+    data.get("ok")
+    and profile.get("connected")
+    and stats
+    and matched
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
+echo "==> Verify SwiftTrace call-order snapshot"
+"$CTL" --socket "$SOCKET" call-order |
+  tee "$CALL_ORDER_JSON"
+
+python3 - "$CALL_ORDER_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+signatures = (data.get("callOrder") or {}).get("signatures") or []
+matched = any(
+    "tracePulse" in signature
+    or "SmokeViewController" in signature
+    for signature in signatures
+)
+ok = bool(
+    data.get("ok")
+    and signatures
+    and matched
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
 echo "==> Stop AgentTraceBridge method tracing"
 "$CTL" --socket "$SOCKET" trace stop |
   tee "$TRACE_STOP_JSON"
@@ -568,3 +629,5 @@ echo "  screenshot: $SCREENSHOT_PNG"
 echo "  touch capture command: yes"
 echo "  touch replay -> UIButton action: yes"
 echo "  AgentTraceBridge live method trace: yes"
+echo "  SwiftTrace profile snapshot: yes"
+echo "  SwiftTrace call order: yes"
