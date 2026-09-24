@@ -24,6 +24,9 @@ TRACE_READ_JSON="$ARTIFACTS/trace-read.json"
 TRACE_STOP_JSON="$ARTIFACTS/trace-stop.json"
 PROFILE_JSON="$ARTIFACTS/profile.json"
 CALL_ORDER_JSON="$ARTIFACTS/call-order.json"
+INSTANCES_START_JSON="$ARTIFACTS/instances-start.json"
+INSTANCES_READ_JSON="$ARTIFACTS/instances-read.json"
+INSTANCES_STOP_JSON="$ARTIFACTS/instances-stop.json"
 
 mkdir -p "$ARTIFACTS"
 rm -rf "$DERIVED"
@@ -31,7 +34,8 @@ rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" \
   "$STATUS_JSON" "$INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
   "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON" \
   "$TRACE_START_JSON" "$TRACE_READ_JSON" "$TRACE_STOP_JSON" \
-  "$PROFILE_JSON" "$CALL_ORDER_JSON"
+  "$PROFILE_JSON" "$CALL_ORDER_JSON" \
+  "$INSTANCES_START_JSON" "$INSTANCES_READ_JSON" "$INSTANCES_STOP_JSON"
 
 DAEMON_PID=""
 UDID="${SMOKE_UDID:-}"
@@ -619,6 +623,93 @@ if not ok:
 raise SystemExit(0 if ok else 1)
 PY
 
+echo "==> Start SwiftTrace lifetime instance counting"
+"$CTL" --socket "$SOCKET" instances start |
+  tee "$INSTANCES_START_JSON"
+
+python3 - "$INSTANCES_START_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+instances = data.get("instances") or {}
+ok = bool(
+    data.get("ok")
+    and instances.get("active")
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
+echo "==> Wait for SmokeLifetimeProbe live instances"
+instances_seen=0
+for _ in $(seq 1 80); do
+  "$CTL" --socket "$SOCKET" instances read > "$INSTANCES_READ_JSON" 2>/dev/null || true
+
+  if python3 - "$INSTANCES_READ_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+instances = data.get("instances") or {}
+counts = instances.get("counts") or []
+matched = any(
+    "SmokeLifetimeProbe" in (item.get("type") or "")
+    and int(item.get("count") or 0) > 0
+    for item in counts
+)
+raise SystemExit(
+    0
+    if data.get("ok")
+       and instances.get("active")
+       and matched
+    else 1
+)
+PY
+  then
+    instances_seen=1
+    break
+  fi
+
+  sleep 0.25
+done
+
+if [ "$instances_seen" != "1" ]; then
+  echo "SmokeLifetimeProbe was not reported by lifetime tracking." >&2
+  cat "$INSTANCES_READ_JSON" >&2 2>/dev/null || true
+  cat "$DAEMON_LOG" >&2 2>/dev/null || true
+  exit 1
+fi
+
+echo "==> Stop SwiftTrace lifetime instance counting"
+"$CTL" --socket "$SOCKET" instances stop |
+  tee "$INSTANCES_STOP_JSON"
+
+python3 - "$INSTANCES_STOP_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+instances = data.get("instances") or {}
+ok = bool(
+    data.get("ok")
+    and not instances.get("active")
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
 echo
 echo "Simulator smoke test passed:"
 echo "  mixed ObjC + Swift: yes"
@@ -631,3 +722,4 @@ echo "  touch replay -> UIButton action: yes"
 echo "  AgentTraceBridge live method trace: yes"
 echo "  SwiftTrace profile snapshot: yes"
 echo "  SwiftTrace call order: yes"
+echo "  SwiftTrace lifetime instance counts: yes"
