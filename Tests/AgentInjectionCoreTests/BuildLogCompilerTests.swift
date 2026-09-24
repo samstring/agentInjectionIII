@@ -81,4 +81,33 @@ final class BuildLogCompilerTests: XCTestCase {
         XCTAssertTrue(rewritten.contains("-o '/tmp/agent-Foo.o'"))
         XCTAssertTrue(rewritten.contains("-Xclang -fno-validate-pch"))
     }
+
+    func testCompilerDiagnosticsAreStructured() {
+        let compiler = BuildLogCompiler()
+        let output = """
+        /repo/Sources/Foo.swift:42:17: error: cannot find 'missing' in scope
+        /repo/Sources/Foo.swift:41:5: warning: immutable value was never used
+        error: emit-module command failed with exit code 1
+        """
+
+        let diagnostics = compiler.parseCompilerDiagnostics(output)
+
+        XCTAssertEqual(diagnostics.count, 3)
+
+        XCTAssertEqual(
+            diagnostics[0].file,
+            "/repo/Sources/Foo.swift"
+        )
+        XCTAssertEqual(diagnostics[0].line, 42)
+        XCTAssertEqual(diagnostics[0].column, 17)
+        XCTAssertEqual(diagnostics[0].severity, "error")
+        XCTAssertEqual(
+            diagnostics[0].message,
+            "cannot find 'missing' in scope"
+        )
+
+        XCTAssertEqual(diagnostics[1].severity, "warning")
+        XCTAssertEqual(diagnostics[2].severity, "error")
+        XCTAssertNil(diagnostics[2].file)
+    }
 }
