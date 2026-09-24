@@ -211,6 +211,94 @@ public final class ControlRouter {
                 )
             }
 
+        case .prepareSwiftUISource:
+            guard let path = request.path,
+                  !path.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_PATH",
+                    message: "prepare_swiftui_source requires a Swift source path."
+                )
+            }
+
+            switch backend.prepareSwiftUISource(
+                path: path
+            ) {
+            case .success(let result):
+                return .operation(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .prepareSwiftUIProject:
+            switch backend.prepareSwiftUIProject() {
+            case .success(let result):
+                return .operation(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .setXcodePath:
+            guard let path = request.path,
+                  !path.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_PATH",
+                    message: "set_xcode_path requires an Xcode.app path."
+                )
+            }
+
+            switch backend.setXcodePath(
+                path: path
+            ) {
+            case .success(let result):
+                return .operation(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .launchXcode:
+            switch backend.launchXcode() {
+            case .success(let result):
+                return .operation(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .getLastError:
+            return .lastError(
+                id: request.id,
+                result: backend.lastError()
+            )
+
         case .traceStart:
             switch backend.traceStart(filter: request.filter) {
             case .success(let result):
