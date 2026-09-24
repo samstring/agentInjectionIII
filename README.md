@@ -11,12 +11,15 @@ The repository now has a real end-to-end headless path for iOS Simulator experim
 ```text
 AI Agent
    |
-   v
-injectionctl
-   |
-   | JSON over Unix Domain Socket
-   v
-injectiond
+   +--> MCP server
+   |       |
+   |       | JSON over Unix Domain Socket
+   |       v
+   +--> injectionctl
+           |
+           | JSON over Unix Domain Socket
+           v
+       injectiond
    |
    +--> BuildLogCompiler
    |      |
@@ -50,6 +53,7 @@ There is no file watcher in the control path.
 
 - `injectionctl` JSON CLI
 - `injectiond` long-running daemon
+- `mcp-server` thin MCP adapter for AI agents
 - Unix Domain Socket control plane
 - InjectionNext-compatible runtime handshake (`INJECTION_VERSION=4001`)
 - local Simulator runtime connection on TCP port `8887`
@@ -63,8 +67,17 @@ There is no file watcher in the control path.
 - runtime load/result reporting
 - optional local runtime installation
 - DEBUG-only project bootstrap that can coexist with teammates using InjectionIII.app
+- screenshot capture
+- UIKit touch capture / read / replay
+- runtime logs and structured injection lifecycle events
+- compiler interception / command capture
+- SwiftTrace method tracing, profiling, call order and instance counts
+- injected XCTest result observation
+- source-order preview/apply helpers
+- optional Xprobe / Eval bridge
+- multiple runtime targets and explicit target selection
 
-The build-log compiler is intentionally focused on normal Xcode/CocoaPods projects first. Bazel, device code signing, tracing, screenshots and touch replay are later phases.
+The build-log compiler is intentionally focused on normal Xcode/CocoaPods projects first. Bazel remains a later build-system phase. The physical-device path exists experimentally but the Simulator remains the validated development path.
 
 ## Build
 
@@ -203,6 +216,27 @@ swift run injectionctl doctor \
 
 The response contains structured `pass` / `warning` / `fail` checks for Xcode selection, project root, build logs, runtime connection/handshake, local runtime bundle, source existence, and compile-command discovery.
 
+## Use from an AI Agent through MCP
+
+The MCP server talks directly to the same Unix socket as `injectionctl`; it does not duplicate the compiler or injection implementation.
+
+```bash
+cd mcp-server
+npm install
+npm test
+npm start
+```
+
+A typical MCP client configuration points Node at:
+
+```text
+/absolute/path/to/agentInjectionIII/mcp-server/index.js
+```
+
+The default daemon socket is `/tmp/agentInjectionIII.sock`. Override it with `AGENT_INJECTION_SOCKET` when needed.
+
+The MCP surface includes injection, screenshots, touch replay, logs/events, compiler state, trace/profile, instance counts, test results, project reordering and optional Xprobe/Eval tools. See [mcp-server/README.md](mcp-server/README.md).
+
 ## Inject source explicitly
 
 Swift:
@@ -335,9 +369,11 @@ Compile failure:
 
 ```mermaid
 flowchart TD
-    Agent["AI Agent / Codex / ChatGPT"] --> CLI["injectionctl"]
+    Agent["AI Agent / Codex / ChatGPT"] --> MCP["MCP server"]
+    Agent --> CLI["injectionctl"]
 
-    CLI -->|"JSON / Unix Domain Socket"| Daemon["injectiond"]
+    MCP -->|"JSON / Unix Domain Socket"| Daemon["injectiond"]
+    CLI -->|"JSON / Unix Domain Socket"| Daemon
 
     subgraph Host["macOS"]
         Daemon --> Router["ControlRouter"]
@@ -381,7 +417,7 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 
 ## Current limitations
 
-- Simulator first; real-device code signing is not implemented yet.
+- Simulator is the validated path. Experimental real-device signing/transport code exists, but real-device validation is intentionally still pending.
 - Build-log lookup requires a successful/recent Xcode build.
 - Swift build-log injection requires `EMIT_FRONTEND_COMMAND_LINES=YES` on modern Xcode.
 - The current path expects `COMPILATION_CACHE_ENABLE_CACHING=NO`.
@@ -389,9 +425,9 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - Bazel is not connected yet.
 - compiler commands are cached under `~/.agentInjectionIII/cache/compile-commands.json`; stale cached commands are invalidated and retried from recent build logs.
 - missing Swift `-filelist` and stale bridging-header PCH paths have first-pass recovery, but still need validation against real-world Xcode/CocoaPods variants.
-- screenshot and experimental SwiftTrace method streaming are exposed through `injectionctl`; touch record/replay is not connected yet.
+- screenshot and UIKit touch capture/read/replay are exposed through both `injectionctl` and MCP; touch replay is covered by the Simulator smoke workflow.
 - trace streaming currently requires the DEBUG-only `AgentTraceBridge` files to be present in the app target and still needs end-to-end validation in a production CocoaPods app.
-- CI is configured, but GitHub-hosted macOS jobs on this private repository are currently failing before any workflow steps are reported, so CI has not yet verified the current Swift build.
+- CI is configured with Swift build/tests, MCP socket transport checks, and a mixed ObjC + Swift + CocoaPods Simulator injection smoke workflow.
 
 ## Roadmap
 
@@ -403,6 +439,7 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - [x] Unix Domain Socket transport
 - [x] structured JSON protocol
 - [x] backend abstraction
+- [x] MCP server over the existing Unix Socket control plane
 
 ### Phase 2 — headless injection
 
@@ -415,7 +452,8 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - [x] dylib link path
 - [x] `inject FILE...` -> runtime load
 - [x] structured `doctor [SOURCE]` preflight diagnostics
-- [ ] validate end-to-end against a real CocoaPods app
+- [x] validate end-to-end against the mixed ObjC + Swift + CocoaPods Simulator smoke app
+- [ ] validate against the target production CocoaPods app
 - [x] persistent compiler-command cache
 - [x] first-pass missing `-filelist` recovery
 - [x] first-pass stale bridging-header PCH recovery
@@ -424,20 +462,25 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 
 ### Phase 3 — agent observability
 
-- [ ] injection lifecycle events
-- [ ] structured compiler diagnostics
+- [x] injection lifecycle events
+- [x] structured compiler diagnostics
 - [x] trace start / read / stop control path
+- [x] scoped trace / profile / call-order controls
 - [x] SwiftTrace method-call side channel
+- [x] lifetime instance counts
+- [x] injected test-result observation
 - [x] screenshot
-- [ ] validate trace + screenshot end-to-end in a real app
-- [ ] touch record/replay
+- [x] UIKit touch capture / read / replay control path
+- [x] Simulator touch replay -> live UIButton smoke validation
+- [ ] validate trace/profile end-to-end in the target production app
 
 ### Phase 4 — devices / advanced build systems
 
-- [ ] real-device signing and transport
+- [x] experimental real-device signing and dylib transport implementation
+- [ ] validate physical-device injection
 - [ ] Bazel compiler lookup
-- [ ] multiple simultaneous app clients
-- [ ] target/client selection
+- [x] multiple simultaneous app clients
+- [x] target/client selection
 
 ## Upstream
 
