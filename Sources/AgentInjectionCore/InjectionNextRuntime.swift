@@ -1260,16 +1260,19 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     private let traceServer: AgentTraceServer
     private let projectRoot: String?
     private let compiler: BuildLogCompiler
+    private let codeSigningIdentity: String?
 
     public init(
         runtimeServer: InjectionNextRuntimeServer,
         traceServer: AgentTraceServer,
         projectRoot: String? = nil,
-        derivedDataRoot: String? = nil
+        derivedDataRoot: String? = nil,
+        codeSigningIdentity: String? = nil
     ) {
         self.runtimeServer = runtimeServer
         self.traceServer = traceServer
         self.projectRoot = projectRoot
+        self.codeSigningIdentity = codeSigningIdentity
         self.compiler = BuildLogCompiler(
             projectRoot: projectRoot,
             derivedDataRoot: derivedDataRoot
@@ -1382,6 +1385,57 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 )
 
             case .success(let artifact):
+                if platform == "iPhoneOS" ||
+                   platform == "AppleTVOS" ||
+                   platform == "XROS" {
+                    guard let identity = codeSigningIdentity,
+                          !identity.isEmpty else {
+                        compiler.remove(artifact)
+                        let error = ControlError(
+                            code: "CODESIGN_IDENTITY_REQUIRED",
+                            message: "Device injection requires --codesign-identity matching the app's expanded code signing identity."
+                        )
+                        if firstError == nil {
+                            firstError = error
+                        }
+                        results.append(
+                            InjectionResult(
+                                file: source,
+                                compiled: true,
+                                injected: false,
+                                compileMilliseconds: artifact.compileMilliseconds,
+                                linkMilliseconds: artifact.linkMilliseconds,
+                                message: error.message
+                            )
+                        )
+                        continue
+                    }
+
+                    switch compiler.codesign(
+                        artifact,
+                        identity: identity
+                    ) {
+                    case .success:
+                        break
+                    case .failure(let error):
+                        compiler.remove(artifact)
+                        if firstError == nil {
+                            firstError = error
+                        }
+                        results.append(
+                            InjectionResult(
+                                file: source,
+                                compiled: true,
+                                injected: false,
+                                compileMilliseconds: artifact.compileMilliseconds,
+                                linkMilliseconds: artifact.linkMilliseconds,
+                                message: error.message
+                            )
+                        )
+                        continue
+                    }
+                }
+
                 let runtimeResult = runtimeServer.loadDylib(
                     path: artifact.dylib,
                     target: target
