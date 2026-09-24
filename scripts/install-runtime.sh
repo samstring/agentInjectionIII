@@ -12,6 +12,7 @@ BUILD="$ROOT/build"
 RUNTIME="$ROOT/runtime"
 XCODE_DEV="$(xcode-select -p)"
 ARCH="$(uname -m)"
+SIMULATOR_ONLY="${AGENT_INJECTION_SIMULATOR_ONLY:-0}"
 
 mkdir -p "$ROOT/upstream" "$BUILD" "$RUNTIME/simulator" "$RUNTIME/device"
 
@@ -86,22 +87,28 @@ SIM_BUNDLE="$RUNTIME/simulator/iOSInjection.bundle"
 DEVICE_BUNDLE="$RUNTIME/device/iOSDevInjection.bundle"
 
 build_runtime iOS iphonesimulator iPhoneSimulator iphonesimulator "$ARCH" "$SIM_BUNDLE"
-build_runtime iOSDev iphoneos iPhoneOS iphoneos arm64 "$DEVICE_BUNDLE"
 
 SIM_PLIST="$SIM_BUNDLE/Info.plist"
-DEVICE_PLIST="$DEVICE_BUNDLE/Info.plist"
-
 set_plist "$SIM_PLIST" INJECTION_NOSTANDALONE 1
 set_plist "$SIM_PLIST" INJECTION_HOST 127.0.0.1
 set_plist "$SIM_PLIST" UserHome "$HOME"
 
-set_plist "$DEVICE_PLIST" INJECTION_NOSTANDALONE 1
-/usr/libexec/PlistBuddy -c "Delete :INJECTION_HOST" "$DEVICE_PLIST" >/dev/null 2>&1 || true
-set_plist "$DEVICE_PLIST" UserHome "$HOME"
+if [ "$SIMULATOR_ONLY" != "1" ]; then
+  build_runtime iOSDev iphoneos iPhoneOS iphoneos arm64 "$DEVICE_BUNDLE"
+
+  DEVICE_PLIST="$DEVICE_BUNDLE/Info.plist"
+  set_plist "$DEVICE_PLIST" INJECTION_NOSTANDALONE 1
+  /usr/libexec/PlistBuddy -c "Delete :INJECTION_HOST" "$DEVICE_PLIST" >/dev/null 2>&1 || true
+  set_plist "$DEVICE_PLIST" UserHome "$HOME"
+fi
 
 echo
 echo "Installed agentInjectionIII runtimes:"
 echo "  simulator: $SIM_BUNDLE"
-echo "  device:    $DEVICE_BUNDLE"
-echo
-echo "Device runtime deliberately has no INJECTION_HOST setting so it can use InjectionNext multicast discovery."
+if [ "$SIMULATOR_ONLY" != "1" ]; then
+  echo "  device:    $DEVICE_BUNDLE"
+  echo
+  echo "Device runtime deliberately has no INJECTION_HOST setting so it can use InjectionNext multicast discovery."
+else
+  echo "  device:    skipped (AGENT_INJECTION_SIMULATOR_ONLY=1)"
+fi
