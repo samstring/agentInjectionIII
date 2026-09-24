@@ -52,6 +52,10 @@ public protocol InjectionBackend: AnyObject {
     func instancesStop() -> Result<InstanceCountsResult, ControlError>
     func testResults(limit: Int?) -> TestResultsResult
     func clearTestResults() -> TestResultsResult
+    func reorderProject(
+        path: String?,
+        apply: Bool
+    ) -> Result<ProjectReorderPlan, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
 }
@@ -390,6 +394,18 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
         TestResultsResult(
             connected: false,
             results: []
+        )
+    }
+
+    public func reorderProject(
+        path: String?,
+        apply: Bool
+    ) -> Result<ProjectReorderPlan, ControlError> {
+        .failure(
+            ControlError(
+                code: "REORDER_NOT_READY",
+                message: "Scaffold backend cannot reorder an Xcode project."
+            )
         )
     }
 
