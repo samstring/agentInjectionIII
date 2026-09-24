@@ -5,11 +5,12 @@ import AgentInjectionCore
 private struct DaemonOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"
     var projectRoot: String?
+    var runtimePort: UInt16 = 8887
 }
 
 private func parseOptions() -> DaemonOptions {
     var options = DaemonOptions()
-    var arguments = Array(CommandLine.arguments.dropFirst())
+    let arguments = Array(CommandLine.arguments.dropFirst())
     var index = 0
 
     while index < arguments.count {
@@ -28,6 +29,15 @@ private func parseOptions() -> DaemonOptions {
             options.projectRoot = arguments[index + 1]
             index += 2
 
+        case "--runtime-port":
+            guard index + 1 < arguments.count,
+                  let port = UInt16(arguments[index + 1]),
+                  port > 0 else {
+                fatalUsage("--runtime-port requires a valid TCP port")
+            }
+            options.runtimePort = port
+            index += 2
+
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -42,11 +52,13 @@ private func parseOptions() -> DaemonOptions {
 
 private func printUsage() {
     print("""
-    usage: injectiond [--socket PATH] [--project ROOT]
+    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT]
 
-      --socket PATH   Unix domain socket path.
-                      Default: /tmp/agentInjectionIII.sock
-      --project ROOT  Project root used to resolve relative source paths.
+      --socket PATH       Unix domain socket path for injectionctl.
+                          Default: /tmp/agentInjectionIII.sock
+      --project ROOT      Project root used to resolve relative source paths.
+      --runtime-port PORT InjectionNext client runtime TCP port.
+                          Default: 8887
     """)
 }
 
@@ -57,7 +69,21 @@ private func fatalUsage(_ message: String) -> Never {
 }
 
 let options = parseOptions()
-let backend = ScaffoldInjectionBackend(projectRoot: options.projectRoot)
+let runtimeServer = InjectionNextRuntimeServer(
+    port: options.runtimePort
+)
+
+do {
+    try runtimeServer.start()
+} catch {
+    fputs("injectiond: unable to start InjectionNext runtime server: \(error)\n", stderr)
+    exit(1)
+}
+
+let backend = InjectionNextRuntimeBackend(
+    runtimeServer: runtimeServer,
+    projectRoot: options.projectRoot
+)
 let router = ControlRouter(
     socketPath: options.socketPath,
     backend: backend
@@ -68,8 +94,9 @@ let server = UnixSocketServer(
 )
 
 fputs(
-    "agentInjectionIII injectiond \(ControlRouter.daemonVersion) listening at " +
-    "\(options.socketPath)\n",
+    "agentInjectionIII injectiond \(ControlRouter.daemonVersion)\n" +
+    "  control: \(options.socketPath)\n" +
+    "  runtime: 127.0.0.1:\(options.runtimePort)\n",
     stderr
 )
 
