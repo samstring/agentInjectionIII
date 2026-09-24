@@ -6,6 +6,7 @@ private struct DaemonOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"
     var projectRoot: String?
     var runtimePort: UInt16 = 8887
+    var tracePort: UInt16 = 8888
     var derivedDataRoot: String?
 }
 
@@ -39,6 +40,15 @@ private func parseOptions() -> DaemonOptions {
             options.runtimePort = port
             index += 2
 
+        case "--trace-port":
+            guard index + 1 < arguments.count,
+                  let port = UInt16(arguments[index + 1]),
+                  port > 0 else {
+                fatalUsage("--trace-port requires a valid TCP port")
+            }
+            options.tracePort = port
+            index += 2
+
         case "--derived-data":
             guard index + 1 < arguments.count else {
                 fatalUsage("--derived-data requires a path")
@@ -60,13 +70,15 @@ private func parseOptions() -> DaemonOptions {
 
 private func printUsage() {
     print("""
-    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--derived-data PATH]
+    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH]
 
       --socket PATH       Unix domain socket path for injectionctl.
                           Default: /tmp/agentInjectionIII.sock
       --project ROOT      Project root used to resolve relative source paths.
       --runtime-port PORT InjectionNext client runtime TCP port.
                           Default: 8887
+      --trace-port PORT   AgentTraceBridge TCP port.
+                          Default: 8888
       --derived-data PATH Override Xcode DerivedData root used for build-log discovery.
     """)
 }
@@ -89,8 +101,20 @@ do {
     exit(1)
 }
 
+let traceServer = AgentTraceServer(
+    port: options.tracePort
+)
+
+do {
+    try traceServer.start()
+} catch {
+    fputs("injectiond: unable to start Agent trace server: \(error)\n", stderr)
+    exit(1)
+}
+
 let backend = InjectionNextRuntimeBackend(
     runtimeServer: runtimeServer,
+    traceServer: traceServer,
     projectRoot: options.projectRoot,
     derivedDataRoot: options.derivedDataRoot
 )
@@ -106,7 +130,8 @@ let server = UnixSocketServer(
 fputs(
     "agentInjectionIII injectiond \(ControlRouter.daemonVersion)\n" +
     "  control: \(options.socketPath)\n" +
-    "  runtime: 127.0.0.1:\(options.runtimePort)\n",
+    "  runtime: 127.0.0.1:\(options.runtimePort)\n" +
+    "  trace:   127.0.0.1:\(options.tracePort)\n",
     stderr
 )
 
