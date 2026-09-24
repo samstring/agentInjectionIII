@@ -65,24 +65,35 @@ final class RuntimeServerTests: XCTestCase {
         }
 
         let deadline = Date().addingTimeInterval(2)
-        while !runtime.status().connected, Date() < deadline {
+        while Date() < deadline {
+            let status = runtime.status()
+            if status.connected,
+               status.platform != nil,
+               status.arch != nil,
+               status.temporaryPath != nil {
+                break
+            }
             usleep(10_000)
         }
 
-        XCTAssertTrue(runtime.status().connected)
+        let readyStatus = runtime.status()
+        XCTAssertTrue(readyStatus.connected)
+        XCTAssertEqual(
+            readyStatus.platform,
+            "iPhoneSimulator"
+        )
+        XCTAssertEqual(
+            readyStatus.arch,
+            "arm64"
+        )
+        XCTAssertNotNil(
+            readyStatus.temporaryPath
+        )
 
         let result = runtime.loadDylib(path: inputDylib.path)
 
         XCTAssertTrue(result.compiled)
         XCTAssertTrue(result.injected)
-        XCTAssertEqual(
-            runtime.status().platform,
-            "iPhoneSimulator"
-        )
-        XCTAssertEqual(
-            runtime.status().arch,
-            "arm64"
-        )
 
         wait(for: [clientFinished], timeout: 3)
     }
