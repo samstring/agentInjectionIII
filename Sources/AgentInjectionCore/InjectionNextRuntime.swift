@@ -857,6 +857,186 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
+    public func doctor(path: String?) -> DoctorReport {
+        let runtime = runtimeServer.status()
+        let compilerDiagnostics = compiler.diagnostics(
+            source: path.map { normalize(path: $0) },
+            platform: runtime.platform
+        )
+
+        var checks = [DoctorCheck]()
+
+        let xcode = Self.selectedXcodeDeveloperDirectory()
+        checks.append(
+            DoctorCheck(
+                name: "xcode",
+                state: xcode == nil ? .fail : .pass,
+                message: xcode.map {
+                    "Selected Xcode developer directory: \($0)"
+                } ?? "xcode-select -p did not return a usable developer directory."
+            )
+        )
+
+        if let projectRoot {
+            let expandedProjectRoot = NSString(
+                string: projectRoot
+            ).expandingTildeInPath
+            let exists = FileManager.default.fileExists(
+                atPath: expandedProjectRoot
+            )
+            checks.append(
+                DoctorCheck(
+                    name: "project",
+                    state: exists ? .pass : .fail,
+                    message: exists
+                        ? "Project root exists: \(expandedProjectRoot)"
+                        : "Project root does not exist: \(expandedProjectRoot)"
+                )
+            )
+        } else {
+            checks.append(
+                DoctorCheck(
+                    name: "project",
+                    state: .warning,
+                    message: "No --project root was supplied; absolute source paths are recommended."
+                )
+            )
+        }
+
+        checks.append(
+            DoctorCheck(
+                name: "build_logs",
+                state: compilerDiagnostics.buildLogCount > 0
+                    ? .pass
+                    : .fail,
+                message: compilerDiagnostics.buildLogCount > 0
+                    ? "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
+                    : "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
+            )
+        )
+
+        checks.append(
+            DoctorCheck(
+                name: "runtime_connection",
+                state: runtime.connected ? .pass : .fail,
+                message: runtime.connected
+                    ? "Injection runtime is connected."
+                    : "No InjectionNext-compatible runtime is connected to 127.0.0.1:\(runtimeServer.port)."
+            )
+        )
+
+        if runtime.connected {
+            let metadataReady =
+                runtime.platform != nil &&
+                runtime.arch != nil &&
+                runtime.temporaryPath != nil
+
+            checks.append(
+                DoctorCheck(
+                    name: "runtime_handshake",
+                    state: metadataReady ? .pass : .fail,
+                    message: metadataReady
+                        ? "Runtime platform=\(runtime.platform!), arch=\(runtime.arch!), tmp=\(runtime.temporaryPath!)"
+                        : "Runtime connected but platform/architecture/temp-path handshake is incomplete."
+                )
+            )
+        }
+
+        let localRuntime = NSString(
+            string: "~/.agentInjectionIII/runtime/iOSInjection.bundle"
+        ).expandingTildeInPath
+        let runtimeInstalled = FileManager.default.fileExists(
+            atPath: localRuntime
+        )
+        checks.append(
+            DoctorCheck(
+                name: "local_runtime_bundle",
+                state: runtimeInstalled ? .pass : .warning,
+                message: runtimeInstalled
+                    ? "Local runtime bundle installed: \(localRuntime)"
+                    : "Local runtime bundle not found at \(localRuntime). Run scripts/install-runtime.sh if this Mac should use agent mode."
+            )
+        )
+
+        if let source = compilerDiagnostics.source {
+            checks.append(
+                DoctorCheck(
+                    name: "source",
+                    state: compilerDiagnostics.sourceExists == true
+                        ? .pass
+                        : .fail,
+                    message: compilerDiagnostics.sourceExists == true
+                        ? "Source exists: \(source)"
+                        : "Source does not exist: \(source)"
+                )
+            )
+
+            if compilerDiagnostics.sourceExists == true {
+                checks.append(
+                    DoctorCheck(
+                        name: "compile_command",
+                        state: compilerDiagnostics.compileCommandFound == true
+                            ? .pass
+                            : .fail,
+                        message: compilerDiagnostics.compileCommandFound == true
+                            ? "Found a matching Xcode compiler command for this source."
+                            : "No matching compiler command found. Build the target with EMIT_FRONTEND_COMMAND_LINES=YES and COMPILATION_CACHE_ENABLE_CACHING=NO."
+                    )
+                )
+            }
+        }
+
+        let requiredFailed = checks.contains {
+            $0.state == .fail
+        }
+
+        return DoctorReport(
+            ready: !requiredFailed,
+            checks: checks,
+            runtime: DoctorRuntime(
+                connected: runtime.connected,
+                platform: runtime.platform,
+                arch: runtime.arch,
+                temporaryPath: runtime.temporaryPath
+            )
+        )
+    }
+
+    private static func selectedXcodeDeveloperDirectory() -> String? {
+        let process = Process()
+        process.executableURL = URL(
+            fileURLWithPath: "/usr/bin/xcode-select"
+        )
+        process.arguments = ["-p"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0,
+                  let value = String(
+                    data: data,
+                    encoding: .utf8
+                  )?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                  ),
+                  !value.isEmpty,
+                  FileManager.default.fileExists(atPath: value)
+            else {
+                return nil
+            }
+
+            return value
+        } catch {
+            return nil
+        }
+    }
+
     private func normalize(path: String) -> String {
         let expanded = NSString(string: path).expandingTildeInPath
 
