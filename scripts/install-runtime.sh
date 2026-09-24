@@ -23,11 +23,12 @@ git -C "$SRC" submodule update --init --recursive
 rm -rf "$BUILD"
 
 build_runtime() {
-  local sdk="$1"
-  local platform="$2"
-  local swift_platform="$3"
-  local archs="$4"
-  local destination="$5"
+  local family="$1"
+  local sdk="$2"
+  local platform="$3"
+  local swift_platform="$4"
+  local archs="$5"
+  local destination="$6"
 
   local platform_root="$XCODE_DEV/Platforms/$platform.platform"
   local swift_libs="$XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$swift_platform"
@@ -36,6 +37,11 @@ build_runtime() {
   local xctest_support="$platform_root/Developer/usr/lib"
   local xccore_frameworks="$platform_root/Developer/Library/PrivateFrameworks"
 
+  local install_name=""
+  if [[ "$family" == *Dev ]]; then
+    install_name="LD_DYLIB_INSTALL_NAME=@rpath/lib${sdk}Injection.dylib"
+  fi
+
   xcodebuild \
     -project "$SRC/App/InjectionNext.xcodeproj" \
     -target InjectionBundle \
@@ -43,12 +49,13 @@ build_runtime() {
     -sdk "$sdk" \
     SYMROOT="$BUILD" \
     ARCHS="$archs" \
-    PRODUCT_NAME=iOSInjection \
+    PRODUCT_NAME="${family}Injection" \
     PLATFORM_DIR="$platform_root" \
     CODE_SIGNING_ALLOWED=NO \
-    LD_RUNPATH_SEARCH_PATHS="@executable_path/Frameworks @loader_path/Frameworks @loader_path/iOSInjection.bundle/Frameworks $swift_libs $concurrency_libs $xctest_frameworks $xctest_support $xccore_frameworks"
+    $install_name \
+    LD_RUNPATH_SEARCH_PATHS="@executable_path/Frameworks @loader_path/Frameworks @loader_path/${family}Injection.bundle/Frameworks $swift_libs $concurrency_libs $xctest_frameworks $xctest_support $xccore_frameworks"
 
-  local source_bundle="$BUILD/Debug-$sdk/iOSInjection.bundle"
+  local source_bundle="$BUILD/Debug-$sdk/${family}Injection.bundle"
   if [ ! -d "$source_bundle" ]; then
     echo "error: expected runtime bundle not found at $source_bundle" >&2
     exit 1
@@ -67,10 +74,10 @@ set_plist() {
 }
 
 SIM_BUNDLE="$RUNTIME/simulator/iOSInjection.bundle"
-DEVICE_BUNDLE="$RUNTIME/device/iOSInjection.bundle"
+DEVICE_BUNDLE="$RUNTIME/device/iOSDevInjection.bundle"
 
-build_runtime iphonesimulator iPhoneSimulator iphonesimulator "$ARCH" "$SIM_BUNDLE"
-build_runtime iphoneos iPhoneOS iphoneos arm64 "$DEVICE_BUNDLE"
+build_runtime iOS iphonesimulator iPhoneSimulator iphonesimulator "$ARCH" "$SIM_BUNDLE"
+build_runtime iOSDev iphoneos iPhoneOS iphoneos arm64 "$DEVICE_BUNDLE"
 
 SIM_PLIST="$SIM_BUNDLE/Info.plist"
 DEVICE_PLIST="$DEVICE_BUNDLE/Info.plist"
