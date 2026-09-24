@@ -23,6 +23,7 @@ public protocol InjectionBackend: AnyObject {
     func touchReplay(payload: String, target: String?) -> Result<TouchResult, ControlError>
     func logs(since: Double?, limit: Int?) -> LogsResult
     func clearLogs() -> LogsResult
+    func unhideSymbols() -> Result<OperationResult, ControlError>
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
@@ -170,6 +171,16 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
 
     public func clearLogs() -> LogsResult {
         LogsResult(entries: [])
+    }
+
+    public func unhideSymbols()
+        -> Result<OperationResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "UNHIDE_NOT_READY",
+                message: "Scaffold backend cannot unhide symbols."
+            )
+        )
     }
 
     public func traceStart(
