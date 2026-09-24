@@ -54,6 +54,61 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.error?.code, "MISSING_FILES")
     }
 
+    func testLoadDylibRequiresPath() throws {
+        let backend = ScaffoldInjectionBackend()
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(action: .loadDylib)
+        let response = try route(request, through: router)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error?.code, "MISSING_PATH")
+    }
+
+    func testSwiftCommandTransformerKeepsOnlyRequestedPrimary() throws {
+        let source = "/repo/Sources/Foo.swift"
+        let command = """
+        /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend         -frontend -emit-object         -primary-file /repo/Sources/Foo.swift         -primary-file /repo/Sources/Bar.swift         -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk         -o /tmp/original.o
+        """
+
+        let transformed = HeadlessXcodeCompiler.CommandTransformer.prepare(
+            command: command,
+            source: source,
+            objectPath: "/tmp/new.o"
+        )
+
+        XCTAssertNotNil(transformed)
+        XCTAssertTrue(transformed?.contains("-primary-file /repo/Sources/Foo.swift") == true)
+        XCTAssertFalse(transformed?.contains("-primary-file /repo/Sources/Bar.swift") == true)
+        XCTAssertTrue(transformed?.contains("-o '/tmp/new.o'") == true)
+    }
+
+    func testSDKExtraction() throws {
+        let command = """
+        /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend         -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk
+        """
+
+        let sdk = HeadlessXcodeCompiler.CommandTransformer.extractSDKPath(
+            from: command
+        )
+
+        XCTAssertEqual(
+            sdk,
+            "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk"
+        )
+        XCTAssertEqual(
+            sdk.flatMap {
+                HeadlessXcodeCompiler.CommandTransformer.inferPlatform(
+                    sdkPath: $0
+                )
+            },
+            "iPhoneSimulator"
+        )
+    }
+
     private func route(
         _ request: ControlRequest,
         through router: ControlRouter
