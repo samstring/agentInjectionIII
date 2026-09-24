@@ -502,6 +502,24 @@ public final class ControlRouter {
                 result: backend.clearTestResults()
             )
 
+        case .reorderProject:
+            switch backend.reorderProject(
+                path: request.path,
+                apply: request.enabled == true
+            ) {
+            case .success(let result):
+                return .reorder(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .traceStop:
             switch backend.traceStop() {
             case .success(let result):
