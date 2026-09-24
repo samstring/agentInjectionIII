@@ -1,5 +1,5 @@
 import Foundation
-import InjectionBazel
+import InjectionLite
 
 /// Headless source recompiler inspired by InjectionLite's build-log strategy.
 ///
