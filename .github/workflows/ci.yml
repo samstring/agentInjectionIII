@@ -20,3 +20,48 @@ jobs:
 
       - name: Test
         run: swift test
+
+
+  simulator-preflight:
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode and simulator runtimes
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
+
+      - name: Boot an available iPhone Simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UDID="$(
+            xcrun simctl list devices available |
+            awk '/iPhone/ && /Shutdown|Booted/ {
+              if (match($0, /\(([0-9A-F-]{36})\)/, m)) {
+                print m[1]
+                exit
+              }
+            }'
+          )"
+
+          if [ -z "$UDID" ]; then
+            echo "No available iPhone Simulator found." >&2
+            exit 1
+          fi
+
+          echo "Using simulator: $UDID"
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl getenv "$UDID" HOME
+          xcrun simctl shutdown "$UDID"
+
+      - name: Build agentInjectionIII
+        run: swift build
+
+      - name: Run unit tests
+        run: swift test
