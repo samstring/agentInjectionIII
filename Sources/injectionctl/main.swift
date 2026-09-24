@@ -39,6 +39,7 @@ private func printUsage() {
     usage:
       injectionctl [--socket PATH] status
       injectionctl [--socket PATH] inject FILE [FILE ...]
+      injectionctl [--socket PATH] load-dylib DYLIB
 
     Responses are JSON and commands return a non-zero exit status on failure.
     """)
@@ -101,6 +102,15 @@ case "inject":
         fatalUsage("inject requires at least one source file.")
     }
     request = ControlRequest(action: .inject, files: files)
+
+case "load-dylib":
+    guard options.arguments.count == 2 else {
+        fatalUsage("load-dylib requires exactly one dylib path.")
+    }
+    request = ControlRequest(
+        action: .loadDylib,
+        path: absolutePath(options.arguments[1])
+    )
 
 default:
     fatalUsage("Unknown command: \(command)")
