@@ -1391,6 +1391,7 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         CompilerInterceptionManager(compiler: compiler)
     private let codeSigningIdentity: String?
     private let swiftUIPreparer = SwiftUIPreparer()
+    private let projectReorderer = ProjectReorderer()
     private let eventStore = InjectionEventStore()
     private let backendStateLock = NSLock()
     private var lastErrorValue: ControlError?
@@ -1460,7 +1461,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "call-order",
                 "instance-counts",
                 "compiler-interception",
-                "xctest-results"
+                "xctest-results",
+                "reorder-project"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -2173,6 +2175,24 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public func clearTestResults()
         -> TestResultsResult {
         traceServer.clearInjectedTestResults()
+    }
+
+    public func reorderProject(
+        path: String?,
+        apply: Bool
+    ) -> Result<ProjectReorderPlan, ControlError> {
+        switch traceServer.callOrderSnapshot() {
+        case .failure(let error):
+            return .failure(error)
+
+        case .success(let order):
+            return projectReorderer.reorder(
+                project: path,
+                projectRoot: projectRoot,
+                signatures: order.signatures,
+                apply: apply
+            )
+        }
     }
 
     public func traceStop()
