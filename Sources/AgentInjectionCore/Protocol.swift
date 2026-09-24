@@ -25,6 +25,7 @@ public enum ControlAction: String, Codable, Sendable {
     case clearEvents = "clear_events"
     case profileSnapshot = "profile_snapshot"
     case setRuntimeEnv = "set_runtime_env"
+    case traceScope = "trace_scope"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -38,6 +39,8 @@ public struct ControlRequest: Codable, Sendable {
     public let payload: String?
     public let since: Double?
     public let environment: [String: String?]?
+    public let scope: String?
+    public let name: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -49,7 +52,9 @@ public struct ControlRequest: Codable, Sendable {
         target: String? = nil,
         payload: String? = nil,
         since: Double? = nil,
-        environment: [String: String?]? = nil
+        environment: [String: String?]? = nil,
+        scope: String? = nil,
+        name: String? = nil
     ) {
         self.id = id
         self.action = action
@@ -61,6 +66,8 @@ public struct ControlRequest: Codable, Sendable {
         self.payload = payload
         self.since = since
         self.environment = environment
+        self.scope = scope
+        self.name = name
     }
 }
 
