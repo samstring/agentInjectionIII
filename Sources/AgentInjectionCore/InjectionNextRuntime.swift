@@ -134,9 +134,16 @@ private enum InjectionNextWire {
             from: fd
         )
 
-        return data.withUnsafeBytes {
-            $0.load(as: Int32.self)
+        var value: Int32 = 0
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            memcpy(
+                &value,
+                base,
+                MemoryLayout<Int32>.size
+            )
         }
+        return value
     }
 
     static func writeInt(
