@@ -6,6 +6,7 @@ private struct DaemonOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"
     var projectRoot: String?
     var runtimePort: UInt16 = 8887
+    var derivedDataRoot: String?
 }
 
 private func parseOptions() -> DaemonOptions {
@@ -38,6 +39,13 @@ private func parseOptions() -> DaemonOptions {
             options.runtimePort = port
             index += 2
 
+        case "--derived-data":
+            guard index + 1 < arguments.count else {
+                fatalUsage("--derived-data requires a path")
+            }
+            options.derivedDataRoot = arguments[index + 1]
+            index += 2
+
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -52,13 +60,14 @@ private func parseOptions() -> DaemonOptions {
 
 private func printUsage() {
     print("""
-    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT]
+    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--derived-data PATH]
 
       --socket PATH       Unix domain socket path for injectionctl.
                           Default: /tmp/agentInjectionIII.sock
       --project ROOT      Project root used to resolve relative source paths.
       --runtime-port PORT InjectionNext client runtime TCP port.
                           Default: 8887
+      --derived-data PATH Override Xcode DerivedData root used for build-log discovery.
     """)
 }
 
@@ -80,9 +89,10 @@ do {
     exit(1)
 }
 
-let backend = InjectionNextRuntimeBackend(
+let backend = HeadlessInjectionBackend(
     runtimeServer: runtimeServer,
-    projectRoot: options.projectRoot
+    projectRoot: options.projectRoot,
+    derivedDataRoot: options.derivedDataRoot
 )
 let router = ControlRouter(
     socketPath: options.socketPath,
