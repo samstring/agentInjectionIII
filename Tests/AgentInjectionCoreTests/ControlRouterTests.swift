@@ -103,44 +103,30 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.error?.code, "MISSING_PATH")
     }
 
-    func testSwiftCommandTransformerKeepsOnlyRequestedPrimary() throws {
+    func testBuildLogCompilerKeepsOnlyRequestedPrimary() throws {
+        let compiler = BuildLogCompiler(projectRoot: "/repo")
         let source = "/repo/Sources/Foo.swift"
         let command = """
         /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend         -frontend -emit-object         -primary-file /repo/Sources/Foo.swift         -primary-file /repo/Sources/Bar.swift         -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk         -o /tmp/original.o
         """
 
-        let transformed = HeadlessXcodeCompiler.CommandTransformer.prepare(
-            command: command,
+        let transformed = compiler.makeSingleFileCommand(
+            original: command,
             source: source,
-            objectPath: "/tmp/new.o"
+            object: "/tmp/new.o"
         )
 
-        XCTAssertNotNil(transformed)
-        XCTAssertTrue(transformed?.contains("-primary-file /repo/Sources/Foo.swift") == true)
-        XCTAssertFalse(transformed?.contains("-primary-file /repo/Sources/Bar.swift") == true)
-        XCTAssertTrue(transformed?.contains("-o '/tmp/new.o'") == true)
-    }
-
-    func testSDKExtraction() throws {
-        let command = """
-        /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend         -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk
-        """
-
-        let sdk = HeadlessXcodeCompiler.CommandTransformer.extractSDKPath(
-            from: command
+        XCTAssertTrue(
+            transformed.contains("-primary-file /repo/Sources/Foo.swift")
         )
-
-        XCTAssertEqual(
-            sdk,
-            "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk"
+        XCTAssertFalse(
+            transformed.contains("-primary-file /repo/Sources/Bar.swift")
         )
-        XCTAssertEqual(
-            sdk.flatMap {
-                HeadlessXcodeCompiler.CommandTransformer.inferPlatform(
-                    sdkPath: $0
-                )
-            },
-            "iPhoneSimulator"
+        XCTAssertTrue(
+            transformed.contains("-o '/tmp/new.o'")
+        )
+        XCTAssertTrue(
+            transformed.contains("-DINJECTING")
         )
     }
 
