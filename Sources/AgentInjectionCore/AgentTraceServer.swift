@@ -27,8 +27,10 @@ public final class AgentTraceServer {
     private var pendingCallOrder: PendingCallOrderCommand?
     private var pendingInstances: PendingInstancesCommand?
     private var lifetimeActive = false
+    private var testResults: [InjectedTestResult] = []
 
     private let maximumBufferedEvents = 10_000
+    private let maximumBufferedTestResults = 1_000
 
     public init(port: UInt16 = 8888) {
         self.port = port
@@ -124,6 +126,41 @@ public final class AgentTraceServer {
             active: active,
             filter: activeFilter,
             events: []
+        )
+    }
+
+    public func injectedTestResults(
+        limit: Int? = nil
+    ) -> TestResultsResult {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var selected = testResults
+        if let limit {
+            let bounded = max(0, min(limit, maximumBufferedTestResults))
+            if selected.count > bounded {
+                selected = Array(selected.suffix(bounded))
+            }
+        }
+
+        return TestResultsResult(
+            connected: client != nil,
+            results: selected
+        )
+    }
+
+    public func clearInjectedTestResults()
+        -> TestResultsResult {
+        lock.lock()
+        testResults.removeAll(
+            keepingCapacity: true
+        )
+        let connected = client != nil
+        lock.unlock()
+
+        return TestResultsResult(
+            connected: connected,
+            results: []
         )
     }
 
@@ -920,6 +957,36 @@ public final class AgentTraceServer {
     private func handle(
         _ message: TraceBridgeMessage
     ) {
+        if message.type == "test_result" {
+            guard let name = message.testName,
+                  let passed = message.passed,
+                  let failures = message.failures else {
+                return
+            }
+
+            lock.lock()
+            testResults.append(
+                InjectedTestResult(
+                    name: name,
+                    passed: passed,
+                    failures: failures,
+                    durationSeconds:
+                        message.durationSeconds,
+                    messages:
+                        message.messages ?? []
+                )
+            )
+            if testResults.count >
+                maximumBufferedTestResults {
+                testResults.removeFirst(
+                    testResults.count -
+                    maximumBufferedTestResults
+                )
+            }
+            lock.unlock()
+            return
+        }
+
         if message.type == "call_order" {
             lock.lock()
             let pending = pendingCallOrder
@@ -1113,6 +1180,11 @@ private struct TraceBridgeMessage: Decodable {
     let invocations: [String: Int]?
     let signatures: [String]?
     let counts: [String: Int]?
+    let testName: String?
+    let passed: Bool?
+    let failures: Int?
+    let durationSeconds: Double?
+    let messages: [String]?
 }
 
 private struct TraceBridgeCommand: Encodable {
