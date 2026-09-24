@@ -111,6 +111,96 @@ final class BuildLogCompilerTests: XCTestCase {
         XCTAssertNil(diagnostics[2].file)
     }
 
+    func testFindsBuildLogsInDirectDerivedDataPath() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-derived-direct-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(
+                at: root
+            )
+        }
+
+        let logs = root
+            .appendingPathComponent("Logs/Build")
+        try FileManager.default.createDirectory(
+            at: logs,
+            withIntermediateDirectories: true
+        )
+        let log = logs
+            .appendingPathComponent(
+                "direct.xcactivitylog"
+            )
+        try Data([0x1f, 0x8b]).write(
+            to: log
+        )
+
+        let compiler = BuildLogCompiler(
+            derivedDataRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path
+        )
+        let diagnostics = compiler.diagnostics()
+
+        XCTAssertEqual(
+            diagnostics.buildLogCount,
+            1
+        )
+        XCTAssertEqual(
+            diagnostics.newestBuildLog,
+            log.path
+        )
+    }
+
+    func testFindsBuildLogsInDerivedDataContainer() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-derived-container-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(
+                at: root
+            )
+        }
+
+        let logs = root
+            .appendingPathComponent(
+                "Demo-ABC123/Logs/Build"
+            )
+        try FileManager.default.createDirectory(
+            at: logs,
+            withIntermediateDirectories: true
+        )
+        let log = logs
+            .appendingPathComponent(
+                "nested.xcactivitylog"
+            )
+        try Data([0x1f, 0x8b]).write(
+            to: log
+        )
+
+        let compiler = BuildLogCompiler(
+            derivedDataRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path
+        )
+        let diagnostics = compiler.diagnostics()
+
+        XCTAssertEqual(
+            diagnostics.buildLogCount,
+            1
+        )
+        XCTAssertEqual(
+            diagnostics.newestBuildLog,
+            log.path
+        )
+    }
+
     func testDetectsBazelWorkspaceWithoutXcodeBuildLogs() throws {
         let root = FileManager.default
             .temporaryDirectory
