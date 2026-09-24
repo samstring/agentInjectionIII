@@ -26,6 +26,8 @@ public final class AgentTraceServer {
     private var pendingProfile: PendingProfileCommand?
     private var pendingCallOrder: PendingCallOrderCommand?
     private var pendingInstances: PendingInstancesCommand?
+    private var pendingXprobe: PendingXprobeCommand?
+    private var pendingEval: PendingEvalCommand?
     private var lifetimeActive = false
     private var testResults: [InjectedTestResult] = []
 
@@ -750,6 +752,189 @@ public final class AgentTraceServer {
         )
     }
 
+    public func xprobeSearch(
+        pattern: String?
+    ) -> Result<XprobeResult, ControlError> {
+        requestXprobe(
+            action: "xprobe_search",
+            pattern: pattern,
+            objectID: nil
+        )
+    }
+
+    public func xprobeInspect(
+        objectID: Int
+    ) -> Result<XprobeResult, ControlError> {
+        requestXprobe(
+            action: "xprobe_inspect",
+            pattern: nil,
+            objectID: objectID
+        )
+    }
+
+    public func eval(
+        objectID: Int,
+        code: String
+    ) -> Result<EvalResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingEvalCommand()
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingEval == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "EVAL_BUSY",
+                    message: "Another Eval request is pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingEval = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "eval",
+                filter: nil,
+                objectID: objectID,
+                code: code
+            )
+        } catch {
+            clearEvalPending(pending)
+            return .failure(
+                ControlError(
+                    code: "EVAL_FAILED",
+                    message: "Unable to send Eval request: \(error)"
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 30
+        ) == .success else {
+            clearEvalPending(pending)
+            return .failure(
+                ControlError(
+                    code: "EVAL_TIMEOUT",
+                    message: "Timed out waiting for runtime Eval."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearEvalPending(pending)
+            return .failure(
+                ControlError(
+                    code: pending.available == false
+                        ? "XPROBE_UNAVAILABLE"
+                        : "EVAL_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        let result = pending.result
+            ?? EvalResult(
+                available: true,
+                objectID: objectID,
+                succeeded: false,
+                error: "Runtime returned no Eval result."
+            )
+        clearEvalPending(pending)
+        return .success(result)
+    }
+
+    private func requestXprobe(
+        action: String,
+        pattern: String?,
+        objectID: Int?
+    ) -> Result<XprobeResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingXprobeCommand()
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingXprobe == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "XPROBE_BUSY",
+                    message: "Another Xprobe request is pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingXprobe = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: action,
+                filter: pattern,
+                objectID: objectID
+            )
+        } catch {
+            clearXprobePending(pending)
+            return .failure(
+                ControlError(
+                    code: "XPROBE_FAILED",
+                    message: "Unable to send Xprobe request: \(error)"
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 30
+        ) == .success else {
+            clearXprobePending(pending)
+            return .failure(
+                ControlError(
+                    code: "XPROBE_TIMEOUT",
+                    message: "Timed out waiting for Xprobe."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            let available = pending.available
+            clearXprobePending(pending)
+            return .failure(
+                ControlError(
+                    code: available == false
+                        ? "XPROBE_UNAVAILABLE"
+                        : "XPROBE_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        let result = pending.result
+            ?? XprobeResult(
+                available: true,
+                error: "Runtime returned no Xprobe result."
+            )
+        clearXprobePending(pending)
+        return .success(result)
+    }
+
     public func profileSnapshot(
         limit: Int?
     ) -> Result<ProfileResult, ControlError> {
@@ -947,6 +1132,16 @@ public final class AgentTraceServer {
                         self.pendingInstances = nil
                         instances.semaphore.signal()
                     }
+                    if let xprobe = self.pendingXprobe {
+                        xprobe.error = "AgentTraceBridge disconnected."
+                        self.pendingXprobe = nil
+                        xprobe.semaphore.signal()
+                    }
+                    if let eval = self.pendingEval {
+                        eval.error = "AgentTraceBridge disconnected."
+                        self.pendingEval = nil
+                        eval.semaphore.signal()
+                    }
                     self.lifetimeActive = false
                 }
                 self.lock.unlock()
@@ -957,6 +1152,47 @@ public final class AgentTraceServer {
     private func handle(
         _ message: TraceBridgeMessage
     ) {
+        if message.type == "xprobe_result" {
+            lock.lock()
+            let pending = pendingXprobe
+            if let pending {
+                let available = message.available ?? false
+                pending.available = available
+                pending.result = XprobeResult(
+                    available: available,
+                    objects: message.objects ?? [],
+                    selected: message.selected,
+                    details: message.details,
+                    error: message.error
+                )
+                pending.error = message.error
+                pendingXprobe = nil
+                pending.semaphore.signal()
+            }
+            lock.unlock()
+            return
+        }
+
+        if message.type == "eval_result" {
+            lock.lock()
+            let pending = pendingEval
+            if let pending {
+                let available = message.available ?? false
+                pending.available = available
+                pending.result = EvalResult(
+                    available: available,
+                    objectID: message.objectID ?? -1,
+                    succeeded: message.succeeded ?? false,
+                    error: message.error
+                )
+                pending.error = message.error
+                pendingEval = nil
+                pending.semaphore.signal()
+            }
+            lock.unlock()
+            return
+        }
+
         if message.type == "test_result" {
             guard let name = message.testName,
                   let passed = message.passed,
@@ -1063,6 +1299,20 @@ public final class AgentTraceServer {
                 pendingInstances = nil
                 instances.semaphore.signal()
             }
+            if message.state == "error",
+               let xprobe = pendingXprobe {
+                xprobe.error = message.error
+                    ?? "Trace bridge reported an unknown error."
+                pendingXprobe = nil
+                xprobe.semaphore.signal()
+            }
+            if message.state == "error",
+               let eval = pendingEval {
+                eval.error = message.error
+                    ?? "Trace bridge reported an unknown error."
+                pendingEval = nil
+                eval.semaphore.signal()
+            }
 
             lock.unlock()
             return
@@ -1111,6 +1361,26 @@ public final class AgentTraceServer {
         lock.unlock()
     }
 
+    private func clearXprobePending(
+        _ pending: PendingXprobeCommand
+    ) {
+        lock.lock()
+        if pendingXprobe === pending {
+            pendingXprobe = nil
+        }
+        lock.unlock()
+    }
+
+    private func clearEvalPending(
+        _ pending: PendingEvalCommand
+    ) {
+        lock.lock()
+        if pendingEval === pending {
+            pendingEval = nil
+        }
+        lock.unlock()
+    }
+
     private func append(
         _ message: TraceBridgeMessage
     ) {
@@ -1138,6 +1408,20 @@ public final class AgentTraceServer {
         }
         lock.unlock()
     }
+}
+
+private final class PendingXprobeCommand {
+    let semaphore = DispatchSemaphore(value: 0)
+    var available = false
+    var result: XprobeResult?
+    var error: String?
+}
+
+private final class PendingEvalCommand {
+    let semaphore = DispatchSemaphore(value: 0)
+    var available = false
+    var result: EvalResult?
+    var error: String?
 }
 
 private final class PendingCallOrderCommand {
@@ -1185,6 +1469,12 @@ private struct TraceBridgeMessage: Decodable {
     let failures: Int?
     let durationSeconds: Double?
     let messages: [String]?
+    let available: Bool?
+    let objects: [XprobeObject]?
+    let selected: XprobeObject?
+    let details: String?
+    let objectID: Int?
+    let succeeded: Bool?
 }
 
 private struct TraceBridgeCommand: Encodable {
@@ -1192,6 +1482,8 @@ private struct TraceBridgeCommand: Encodable {
     let filter: String?
     let scope: String?
     let name: String?
+    let objectID: Int?
+    let code: String?
 }
 
 private final class TraceBridgeClient {
@@ -1262,13 +1554,17 @@ private final class TraceBridgeClient {
         action: String,
         filter: String?,
         scope: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        objectID: Int? = nil,
+        code: String? = nil
     ) throws {
         let command = TraceBridgeCommand(
             action: action,
             filter: filter,
             scope: scope,
-            name: name
+            name: name,
+            objectID: objectID,
+            code: code
         )
 
         var data = try JSONEncoder().encode(command)
