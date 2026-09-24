@@ -1,11 +1,13 @@
 import Foundation
+import InjectionBazel
 
 /// Headless source recompiler inspired by InjectionLite's build-log strategy.
 ///
 /// InjectionLite is MIT licensed:
 /// Copyright (c) John Holdsworth.
-/// This implementation intentionally keeps only the Xcode build-log path and
-/// does not include its file watcher, Bazel integration, or runtime loader.
+/// This implementation keeps Agent-driven compilation while reusing
+/// InjectionLite's Bazel provider when a Bazel workspace is detected. Xcode
+/// build logs and intercepted compiler commands remain the default providers.
 public final class BuildLogCompiler {
     public struct Artifact: Sendable {
         public let source: String
@@ -41,6 +43,8 @@ public final class BuildLogCompiler {
     private var selectedXcodePath: String?
     private let cacheLock = NSLock()
     private var memoryCache: [String: CachedCommand] = [:]
+    private let bazelLock = NSLock()
+    private var bazelParsers: [String: BazelAQueryParser] = [:]
 
     private let argumentRegex = #"[^\s\\]*(?:\\.[^\s\\]*)*"#
     private lazy var quotedArgumentRegex =
@@ -500,25 +504,51 @@ public final class BuildLogCompiler {
         let object = "\(workDir)/\(token).o"
         let dylib = "\(workDir)/\(token).dylib"
 
-        var compileCommand = makeSingleFileCommand(
-            original: located.command,
-            source: source,
-            object: object
-        )
+        let bazelWorkspace =
+            bazelWorkspacePath(
+                from: located.logPath
+            )
+
+        var compileCommand: String
+        if let bazelWorkspace,
+           let parser = bazelParser(
+                workspaceRoot: bazelWorkspace
+           ) {
+            compileCommand =
+                parser.prepareFinalCommand(
+                    command: located.command,
+                    source: source,
+                    objectFile: object,
+                    tmpdir: workDir + "/",
+                    injectionNumber:
+                        Int(
+                            Date.timeIntervalSinceReferenceDate
+                                * 1_000
+                        )
+                )
+        } else {
+            compileCommand = makeSingleFileCommand(
+                original: located.command,
+                source: source,
+                object: object
+            )
+        }
 
         var temporaryInputs: [String] = []
-        switch prepareMissingInputs(
-            command: compileCommand,
-            source: source,
-            activityLogPath: located.logPath
-        ) {
-        case .success(let prepared):
-            compileCommand = prepared.command
-            temporaryInputs = prepared.temporaryFiles
+        if bazelWorkspace == nil {
+            switch prepareMissingInputs(
+                command: compileCommand,
+                source: source,
+                activityLogPath: located.logPath
+            ) {
+            case .success(let prepared):
+                compileCommand = prepared.command
+                temporaryInputs = prepared.temporaryFiles
 
-        case .failure(let error):
-            invalidate(cacheKey)
-            return .failure(error)
+            case .failure(let error):
+                invalidate(cacheKey)
+                return .failure(error)
+            }
         }
 
         defer {
@@ -886,6 +916,29 @@ public final class BuildLogCompiler {
         source: String,
         platform: String
     ) -> CachedCommand? {
+        if let workspace =
+            BazelInterface.findWorkspaceRoot(
+                containing: source
+            ),
+           let parser = bazelParser(
+                workspaceRoot: workspace
+           ) {
+            var found:
+                (logDir: String, scanner: Popen?)?
+            if let command = parser.command(
+                for: source,
+                platformFilter: platform,
+                found: &found
+            ) {
+                return CachedCommand(
+                    command: command,
+                    logPath:
+                        "bazel:" + workspace,
+                    workingDirectory: workspace
+                )
+            }
+        }
+
         let escapedSource = shellEscapePath(source)
         let sourceForms = [
             source,
@@ -950,6 +1003,41 @@ public final class BuildLogCompiler {
         }
 
         return nil
+    }
+
+    private func bazelParser(
+        workspaceRoot: String
+    ) -> BazelAQueryParser? {
+        bazelLock.lock()
+        defer { bazelLock.unlock() }
+
+        if let parser =
+            bazelParsers[workspaceRoot] {
+            return parser
+        }
+
+        guard let parser =
+            try? BazelAQueryParser(
+                workspaceRoot: workspaceRoot
+            ) else {
+            return nil
+        }
+
+        bazelParsers[workspaceRoot] =
+            parser
+        return parser
+    }
+
+    private func bazelWorkspacePath(
+        from source: String
+    ) -> String? {
+        let prefix = "bazel:"
+        guard source.hasPrefix(prefix) else {
+            return nil
+        }
+        return String(
+            source.dropFirst(prefix.count)
+        )
     }
 
     private func buildLogsNewestFirst() -> [URL] {
