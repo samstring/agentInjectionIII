@@ -15,6 +15,7 @@ public protocol InjectionBackend: AnyObject {
     func status() -> BackendStatus
     func inject(files: [String]) -> BackendInjectionResponse
     func loadDylib(path: String) -> BackendInjectionResponse
+    func doctor(path: String?) -> DoctorReport
 }
 
 /// Phase-1 backend.
@@ -78,6 +79,19 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                 code: "RUNTIME_NOT_READY",
                 message: "Injection runtime bridge is not connected yet."
             )
+        )
+    }
+
+    public func doctor(path: String?) -> DoctorReport {
+        DoctorReport(
+            ready: false,
+            checks: [
+                DoctorCheck(
+                    name: "backend",
+                    state: .fail,
+                    message: "Scaffold backend has no injection engine."
+                )
+            ]
         )
     }
 
