@@ -66,6 +66,7 @@ private func printUsage() {
       injectionctl [--socket PATH] last-error
       injectionctl [--socket PATH] events [LIMIT]
       injectionctl [--socket PATH] events clear
+      injectionctl [--socket PATH] [--target ID] env NAME [VALUE]
       injectionctl [--socket PATH] profile [LIMIT]
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace read [LIMIT]
@@ -331,6 +332,27 @@ case "events":
             limit: limit
         )
     }
+
+case "env":
+    guard options.arguments.count == 2 ||
+          options.arguments.count == 3 else {
+        fatalUsage("env requires NAME and optional VALUE. Omit VALUE to unset.")
+    }
+
+    let name = options.arguments[1]
+    guard name.hasPrefix("INJECTION_") else {
+        fatalUsage("env only accepts INJECTION_* names.")
+    }
+
+    request = ControlRequest(
+        action: .setRuntimeEnv,
+        target: options.target,
+        environment: [
+            name: options.arguments.count == 3
+                ? options.arguments[2]
+                : nil
+        ]
+    )
 
 case "profile":
     guard options.arguments.count <= 2 else {
