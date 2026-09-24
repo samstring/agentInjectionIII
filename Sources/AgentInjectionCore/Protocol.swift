@@ -6,6 +6,9 @@ public enum ControlAction: String, Codable, Sendable {
     case loadDylib = "load_dylib"
     case doctor
     case screenshot
+    case traceStart = "trace_start"
+    case traceStop = "trace_stop"
+    case traceRead = "trace_read"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -13,17 +16,23 @@ public struct ControlRequest: Codable, Sendable {
     public let action: ControlAction
     public let files: [String]?
     public let path: String?
+    public let filter: String?
+    public let limit: Int?
 
     public init(
         id: String = UUID().uuidString,
         action: ControlAction,
         files: [String]? = nil,
-        path: String? = nil
+        path: String? = nil,
+        filter: String? = nil,
+        limit: Int? = nil
     ) {
         self.id = id
         self.action = action
         self.files = files
         self.path = path
+        self.filter = filter
+        self.limit = limit
     }
 }
 
@@ -150,6 +159,44 @@ public struct ScreenshotResult: Codable, Sendable {
     }
 }
 
+public struct TraceEvent: Codable, Sendable {
+    public let sequence: Int64
+    public let timestamp: Double
+    public let text: String
+    public let indent: Int?
+
+    public init(
+        sequence: Int64,
+        timestamp: Double,
+        text: String,
+        indent: Int? = nil
+    ) {
+        self.sequence = sequence
+        self.timestamp = timestamp
+        self.text = text
+        self.indent = indent
+    }
+}
+
+public struct TraceResult: Codable, Sendable {
+    public let connected: Bool
+    public let active: Bool
+    public let filter: String?
+    public let events: [TraceEvent]
+
+    public init(
+        connected: Bool,
+        active: Bool,
+        filter: String? = nil,
+        events: [TraceEvent] = []
+    ) {
+        self.connected = connected
+        self.active = active
+        self.filter = filter
+        self.events = events
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -220,6 +267,7 @@ public struct ControlResponse: Codable, Sendable {
     public let injections: [InjectionResult]?
     public let doctor: DoctorReport?
     public let screenshot: ScreenshotResult?
+    public let trace: TraceResult?
     public let error: ControlError?
 
     public init(
@@ -229,6 +277,7 @@ public struct ControlResponse: Codable, Sendable {
         injections: [InjectionResult]? = nil,
         doctor: DoctorReport? = nil,
         screenshot: ScreenshotResult? = nil,
+        trace: TraceResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -237,6 +286,7 @@ public struct ControlResponse: Codable, Sendable {
         self.injections = injections
         self.doctor = doctor
         self.screenshot = screenshot
+        self.trace = trace
         self.error = error
     }
 
@@ -282,6 +332,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             screenshot: result
+        )
+    }
+
+    public static func trace(
+        id: String,
+        result: TraceResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            trace: result
         )
     }
 
