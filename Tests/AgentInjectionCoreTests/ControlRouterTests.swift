@@ -189,6 +189,33 @@ final class ControlRouterTests: XCTestCase {
         )
     }
 
+    func testCompilerDiagnosticsAreStructured() throws {
+        let compiler = BuildLogCompiler(projectRoot: "/repo")
+        let output = """
+        /repo/Sources/Foo.swift:42:17: error: cannot find 'missing' in scope
+        /repo/Sources/Foo.swift:43:9: warning: immutable value 'value' was never used
+        note: while compiling requested source
+        /repo/Sources/Foo.swift:42:17: error: cannot find 'missing' in scope
+        """
+
+        let diagnostics = compiler.parseCompilerDiagnostics(output)
+
+        XCTAssertEqual(diagnostics.count, 3)
+
+        XCTAssertEqual(diagnostics[0].file, "/repo/Sources/Foo.swift")
+        XCTAssertEqual(diagnostics[0].line, 42)
+        XCTAssertEqual(diagnostics[0].column, 17)
+        XCTAssertEqual(diagnostics[0].severity, "error")
+        XCTAssertEqual(
+            diagnostics[0].message,
+            "cannot find 'missing' in scope"
+        )
+
+        XCTAssertEqual(diagnostics[1].severity, "warning")
+        XCTAssertEqual(diagnostics[2].severity, "note")
+        XCTAssertNil(diagnostics[2].file)
+    }
+
     private func route(
         _ request: ControlRequest,
         through router: ControlRouter
