@@ -346,6 +346,31 @@ public final class ControlRouter {
                 result: backend.compilerState()
             )
 
+        case .compilerInterception:
+            guard let enabled = request.enabled else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_ENABLED",
+                    message: "compiler_interception requires enabled=true or false."
+                )
+            }
+
+            switch backend.setCompilerInterception(
+                enabled: enabled
+            ) {
+            case .success(let result):
+                return .compilerState(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .profileSnapshot:
             switch backend.profileSnapshot(
                 limit: request.limit
