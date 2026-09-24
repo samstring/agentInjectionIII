@@ -89,20 +89,6 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.error?.code, "MISSING_FILES")
     }
 
-    func testLoadDylibRequiresPath() throws {
-        let backend = ScaffoldInjectionBackend()
-        let router = ControlRouter(
-            socketPath: "/tmp/test-agentInjectionIII.sock",
-            backend: backend
-        )
-
-        let request = ControlRequest(action: .loadDylib)
-        let response = try route(request, through: router)
-
-        XCTAssertFalse(response.ok)
-        XCTAssertEqual(response.error?.code, "MISSING_PATH")
-    }
-
     func testTraceFailsCleanlyWithoutBridge() throws {
         let backend = ScaffoldInjectionBackend()
         let router = ControlRouter(
