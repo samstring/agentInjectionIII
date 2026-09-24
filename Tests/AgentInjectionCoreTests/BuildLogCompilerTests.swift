@@ -110,4 +110,62 @@ final class BuildLogCompilerTests: XCTestCase {
         XCTAssertEqual(diagnostics[2].severity, "error")
         XCTAssertNil(diagnostics[2].file)
     }
+
+    func testDetectsBazelWorkspaceWithoutXcodeBuildLogs() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-bazel-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default
+                .removeItem(at: root)
+        }
+
+        let package = root
+            .appendingPathComponent("App")
+        try FileManager.default
+            .createDirectory(
+                at: package,
+                withIntermediateDirectories: true
+            )
+
+        try "module(name = \"demo\")\n".write(
+            to: root.appendingPathComponent(
+                "MODULE.bazel"
+            ),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "swift_library(name = \"app\")\n".write(
+            to: package.appendingPathComponent(
+                "BUILD"
+            ),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let source = package
+            .appendingPathComponent("Feature.swift")
+        try "struct Feature {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path
+        )
+
+        XCTAssertEqual(
+            compiler.buildSystem(
+                for: source.path
+            ),
+            "bazel"
+        )
+    }
+
 }
