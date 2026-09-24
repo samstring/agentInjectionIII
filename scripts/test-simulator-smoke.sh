@@ -39,6 +39,8 @@ cleanup() {
     wait "$DAEMON_PID" >/dev/null 2>&1 || true
   fi
 
+  rm -f "$SOCKET" >/dev/null 2>&1 || true
+
   if [ -n "$UDID" ]; then
     xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
@@ -341,8 +343,13 @@ echo "==> Verify InjectionNext screenshot command"
 
 python3 - "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" <<'PY'
 import json, os, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+
 path = sys.argv[2]
 ok = bool(
     data.get("ok")
