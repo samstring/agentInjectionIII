@@ -85,7 +85,7 @@ final class SmokeViewController: UIViewController {
             withTimeInterval: 0.20,
             repeats: true
         ) { [weak self] _ in
-            self?.refreshSmokeState()
+            self?.tracePulse()
         }
     }
 
@@ -100,6 +100,10 @@ final class SmokeViewController: UIViewController {
 
     @objc dynamic func smokeMessage() -> String {
         "BEFORE"
+    }
+
+    @objc dynamic func tracePulse() {
+        refreshSmokeState()
     }
 
     @objc private func didReplayTouch() {
