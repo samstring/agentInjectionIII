@@ -89,6 +89,21 @@ public final class ControlRouter {
                 id: request.id,
                 report: backend.doctor(path: request.path)
             )
+
+        case .screenshot:
+            switch backend.screenshot(path: request.path) {
+            case .success(let result):
+                return .screenshot(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
         }
     }
 }
