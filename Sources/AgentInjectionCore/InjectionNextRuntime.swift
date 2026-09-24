@@ -301,7 +301,9 @@ private final class InjectionRuntimeClient {
         Darwin.close(fd)
     }
 
-    func validate() throws {
+    func validate(
+        xcodePath: String? = nil
+    ) throws {
         let version = try InjectionNextWire.readInt(from: fd)
         guard version == InjectionNextWire.version else {
             throw ControlError(
@@ -320,7 +322,17 @@ private final class InjectionRuntimeClient {
 
         try send(
             command: .xcodePath,
-            string: Self.xcodeApplicationPath()
+            string: xcodePath
+                ?? Self.xcodeApplicationPath()
+        )
+    }
+
+    func setXcodePath(
+        _ path: String
+    ) throws {
+        try send(
+            command: .xcodePath,
+            string: path
         )
     }
 
@@ -852,6 +864,7 @@ public final class InjectionNextRuntimeServer {
     private let stateLock = NSLock()
     private let logStore: AgentLogStore
     private let discovery: InjectionDeviceDiscovery?
+    private var selectedXcodePath: String?
 
     private var listenerFD: Int32 = -1
     private var clients: [String: InjectionRuntimeClient] = [:]
@@ -860,11 +873,13 @@ public final class InjectionNextRuntimeServer {
     public init(
         port: UInt16 = 8887,
         devicesEnabled: Bool = false,
-        logStore: AgentLogStore = AgentLogStore()
+        logStore: AgentLogStore = AgentLogStore(),
+        xcodePath: String? = nil
     ) {
         self.port = port
         self.devicesEnabled = devicesEnabled
         self.logStore = logStore
+        self.selectedXcodePath = xcodePath
         self.discovery = devicesEnabled
             ? InjectionDeviceDiscovery(port: port)
             : nil
@@ -943,6 +958,28 @@ public final class InjectionNextRuntimeServer {
 
         queue.async { [weak self] in
             self?.acceptLoop()
+        }
+    }
+
+    public func setXcodePath(
+        _ path: String
+    ) {
+        stateLock.lock()
+        selectedXcodePath = path
+        let currentClients = clientOrder.compactMap {
+            clients[$0]
+        }
+        stateLock.unlock()
+
+        for client in currentClients {
+            do {
+                try client.setXcodePath(path)
+            } catch {
+                logStore.append(
+                    "Unable to update Xcode path for target \(client.id): \(error)",
+                    level: "warning"
+                )
+            }
         }
     }
 
@@ -1163,8 +1200,14 @@ public final class InjectionNextRuntimeServer {
                 logStore: logStore
             )
 
+            stateLock.lock()
+            let xcodePath = selectedXcodePath
+            stateLock.unlock()
+
             do {
-                try client.validate()
+                try client.validate(
+                    xcodePath: xcodePath
+                )
             } catch {
                 logStore.append(
                     "Rejected runtime connection from \(peerInfo.address): \(error)",
