@@ -44,7 +44,7 @@ let package = Package(
                     package: "InjectionLite"
                 ),
                 .product(
-                    name: "InjectionBazel",
+                    name: "InjectionLite",
                     package: "InjectionLite"
                 ),
                 .product(
