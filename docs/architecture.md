@@ -333,3 +333,36 @@ The next high-value additions are:
 - screenshots and touch record/replay,
 - multi-client selection,
 - real-device signing/transport.
+
+
+## Agent observability side channel
+
+InjectionNext already provides screenshot request/response messages, so
+`injectionctl screenshot` uses the existing runtime connection on port 8887.
+
+Method tracing is different: SwiftTrace writes method entries through its
+`logOutput` callback and does not stream each call through the InjectionNext
+server protocol. agentInjectionIII therefore uses a small DEBUG-only side
+channel:
+
+```text
+SwiftTrace.logOutput
+        |
+AgentTraceBridge (inside app)
+        |
+        | TCP 127.0.0.1:8888, newline JSON
+        v
+AgentTraceServer (in injectiond)
+        |
+        +-- ring buffer (10,000 events)
+        |
+injectionctl trace read
+```
+
+`trace start` and `trace stop` are acknowledged by the app bridge. The CLI
+does not report success merely because a command was written to the socket; it
+waits until the App confirms SwiftTrace was actually started/stopped.
+
+The trace bridge starts only after the embedded Agent runtime bundle loads.
+When the bootstrap falls back to InjectionIII.app for a teammate, the Agent
+trace bridge is not started.
