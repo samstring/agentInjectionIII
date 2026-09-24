@@ -32,6 +32,7 @@ public protocol InjectionBackend: AnyObject {
     func events(limit: Int?) -> InjectionEventsResult
     func clearEvents() -> InjectionEventsResult
     func profileSnapshot(limit: Int?) -> Result<ProfileResult, ControlError>
+    func compilerState() -> CompilerStateResult
     func setRuntimeEnvironment(
         _ values: [String: String?],
         target: String?
@@ -265,6 +266,17 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                 code: "PROFILE_NOT_READY",
                 message: "Scaffold backend has no profiling bridge."
             )
+        )
+    }
+
+    public func compilerState() -> CompilerStateResult {
+        CompilerStateResult(
+            xcodePath: nil,
+            frontendPath: nil,
+            patchedFrontendPath: nil,
+            intercepted: false,
+            commandSource: "none",
+            note: "Scaffold backend has no compiler."
         )
     }
 
