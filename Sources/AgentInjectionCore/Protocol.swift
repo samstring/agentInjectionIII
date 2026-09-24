@@ -5,6 +5,7 @@ public enum ControlAction: String, Codable, Sendable {
     case inject
     case loadDylib = "load_dylib"
     case doctor
+    case screenshot
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -76,7 +77,7 @@ public struct DaemonStatus: Codable, Sendable {
     }
 }
 
-public enum DoctorCheckState: String, Codable, Sendable {
+public enum DoctorCheckState: String, Codable, Sendable, Equatable {
     case pass
     case warning
     case fail
@@ -133,6 +134,22 @@ public struct DoctorReport: Codable, Sendable {
     }
 }
 
+public struct ScreenshotResult: Codable, Sendable {
+    public let path: String
+    public let mimeType: String
+    public let byteCount: Int
+
+    public init(
+        path: String,
+        mimeType: String,
+        byteCount: Int
+    ) {
+        self.path = path
+        self.mimeType = mimeType
+        self.byteCount = byteCount
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -168,6 +185,7 @@ public struct ControlResponse: Codable, Sendable {
     public let status: DaemonStatus?
     public let injections: [InjectionResult]?
     public let doctor: DoctorReport?
+    public let screenshot: ScreenshotResult?
     public let error: ControlError?
 
     public init(
@@ -176,6 +194,7 @@ public struct ControlResponse: Codable, Sendable {
         status: DaemonStatus? = nil,
         injections: [InjectionResult]? = nil,
         doctor: DoctorReport? = nil,
+        screenshot: ScreenshotResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -183,6 +202,7 @@ public struct ControlResponse: Codable, Sendable {
         self.status = status
         self.injections = injections
         self.doctor = doctor
+        self.screenshot = screenshot
         self.error = error
     }
 
@@ -217,6 +237,17 @@ public struct ControlResponse: Codable, Sendable {
                     code: "DOCTOR_NOT_READY",
                     message: "One or more required injection checks failed."
                 )
+        )
+    }
+
+    public static func screenshot(
+        id: String,
+        result: ScreenshotResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            screenshot: result
         )
     }
 
