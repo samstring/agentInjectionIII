@@ -30,10 +30,13 @@ public final class SwiftUIPreparer {
         var patched = original
         var changes = 0
 
-        patched[#"""
+        let bodyPattern = #"""
             ^((\s+)(public )?(var body:|func body\([^)]*\) -\>) some View \{\n\#
             (\2(?!    (if|switch|ForEach) )\s+(?!\.enableInjection)\S.*\n|(\s*|#.+)\n)+)(?<!#endif\n)\2\}\n
-            """#.anchorsMatchLines, count: &changes] = """
+            """#.anchorsMatchLines
+
+        let beforeBodyPatch = patched
+        patched[bodyPattern] = """
             $2#if DEBUG
             $2@ObserveInjection var forceRedraw
             $2#endif
@@ -42,6 +45,9 @@ public final class SwiftUIPreparer {
             $2}
 
             """
+        if patched != beforeBodyPatch {
+            changes += 1
+        }
 
         if (patched.contains("class AppDelegate") ||
             patched.contains("@main\n")) &&
