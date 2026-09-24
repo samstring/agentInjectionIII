@@ -1073,32 +1073,68 @@ public final class BuildLogCompiler {
                 .appendingPathComponent("Library/Developer/Xcode/DerivedData")
         }
 
-        guard let workspaces = try? fileManager.contentsOfDirectory(
-            at: derivedData,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
+        var logDirectories: [URL] = []
+
+        // xcodebuild -derivedDataPath points directly at one project's
+        // DerivedData root:
+        //   <root>/Logs/Build/*.xcactivitylog
+        let directLogs = derivedData
+            .appendingPathComponent("Logs/Build")
+        if fileManager.fileExists(
+            atPath: directLogs.path
+        ) {
+            logDirectories.append(
+                directLogs
+            )
+        }
+
+        // The default ~/Library/Developer/Xcode/DerivedData directory
+        // contains one child directory per workspace/project:
+        //   <root>/<workspace>/Logs/Build/*.xcactivitylog
+        if let workspaces =
+            try? fileManager.contentsOfDirectory(
+                at: derivedData,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) {
+            for workspace in workspaces {
+                let logsDirectory = workspace
+                    .appendingPathComponent(
+                        "Logs/Build"
+                    )
+                if fileManager.fileExists(
+                    atPath: logsDirectory.path
+                ) {
+                    logDirectories.append(
+                        logsDirectory
+                    )
+                }
+            }
         }
 
         var logs: [(URL, Date)] = []
 
-        for workspace in workspaces {
-            let logsDirectory = workspace
-                .appendingPathComponent("Logs/Build")
-
-            guard let files = try? fileManager.contentsOfDirectory(
-                at: logsDirectory,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            ) else {
+        for logsDirectory in logDirectories {
+            guard let files =
+                try? fileManager.contentsOfDirectory(
+                    at: logsDirectory,
+                    includingPropertiesForKeys: [
+                        .contentModificationDateKey
+                    ],
+                    options: [.skipsHiddenFiles]
+                )
+            else {
                 continue
             }
 
-            for file in files where file.pathExtension == "xcactivitylog" {
+            for file in files
+            where file.pathExtension ==
+                "xcactivitylog" {
                 let date = (
                     try? file.resourceValues(
-                        forKeys: [.contentModificationDateKey]
+                        forKeys: [
+                            .contentModificationDateKey
+                        ]
                     ).contentModificationDate
                 ) ?? .distantPast
                 logs.append((file, date))
