@@ -2081,6 +2081,52 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
+    public func compilerState() -> CompilerStateResult {
+        let xcode = compiler.xcodePath()
+        let frontend: String?
+        let patched: String?
+        let intercepted: Bool
+
+        if let xcode {
+            let bin = URL(
+                fileURLWithPath: xcode
+            )
+            .appendingPathComponent(
+                "Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+            )
+
+            let frontendURL = bin.appendingPathComponent(
+                "swift-frontend"
+            )
+            let patchedURL = URL(
+                fileURLWithPath: frontendURL.path + ".save"
+            )
+
+            frontend = frontendURL.path
+            patched = patchedURL.path
+            intercepted = FileManager.default.fileExists(
+                atPath: patchedURL.path
+            )
+        } else {
+            frontend = nil
+            patched = nil
+            intercepted = false
+        }
+
+        return CompilerStateResult(
+            xcodePath: xcode,
+            frontendPath: frontend,
+            patchedFrontendPath: patched,
+            intercepted: intercepted,
+            commandSource: intercepted
+                ? "intercepted"
+                : "build-log",
+            note: intercepted
+                ? "swift-frontend appears patched in the selected Xcode toolchain."
+                : "Using build-log compiler recovery; compiler interception is not enabled."
+        )
+    }
+
     public func profileSnapshot(
         limit: Int?
     ) -> Result<ProfileResult, ControlError> {
