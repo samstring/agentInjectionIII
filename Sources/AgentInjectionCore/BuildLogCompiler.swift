@@ -74,6 +74,86 @@ public final class BuildLogCompiler {
         }
     }
 
+    public func knownSwiftSources(
+        maximumLogs: Int = 12
+    ) -> [String] {
+        var sources = Set<String>()
+
+        cacheLock.lock()
+        for key in memoryCache.keys {
+            if let separator = key.lastIndex(of: "|") {
+                let source = String(key[..<separator])
+                if source.hasSuffix(".swift") {
+                    sources.insert(source)
+                }
+            }
+        }
+        cacheLock.unlock()
+
+        for logURL in buildLogsNewestFirst()
+            .prefix(maximumLogs) {
+            let result = Shell.run(
+                executable: "/usr/bin/gunzip",
+                arguments: ["-c", logURL.path]
+            )
+            guard result.status == 0 else {
+                continue
+            }
+
+            let normalized = result.stdout
+                .replacingOccurrences(
+                    of: "\r",
+                    with: "\n"
+                )
+
+            let pattern =
+                " -primary-file (\(quotedArgumentRegex))"
+
+            for rawLine in normalized.split(
+                separator: "\n",
+                omittingEmptySubsequences: true
+            ) {
+                let line = String(rawLine)
+                guard line.contains("swift-frontend"),
+                      let token = firstRegexCapture(
+                        pattern,
+                        in: line
+                      )
+                else {
+                    continue
+                }
+
+                let source = standardized(
+                    decodeShellToken(token)
+                )
+
+                guard source.hasSuffix(".swift"),
+                      fileManager.fileExists(
+                        atPath: source
+                      ) else {
+                    continue
+                }
+
+                if let projectRoot {
+                    let root = standardized(
+                        projectRoot
+                    )
+                    guard source.hasPrefix(
+                        root.hasSuffix("/")
+                            ? root
+                            : root + "/"
+                    ) else {
+                        continue
+                    }
+                }
+
+                sources.insert(source)
+            }
+        }
+
+        return sources.sorted()
+    }
+
     public func intermediatesDirectory() -> URL? {
         guard let newest = buildLogsNewestFirst().first else {
             return nil
