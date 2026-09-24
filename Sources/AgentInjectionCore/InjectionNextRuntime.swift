@@ -1387,6 +1387,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     private let traceServer: AgentTraceServer
     private let projectRoot: String?
     private let compiler: BuildLogCompiler
+    private lazy var compilerInterception =
+        CompilerInterceptionManager(compiler: compiler)
     private let codeSigningIdentity: String?
     private let swiftUIPreparer = SwiftUIPreparer()
     private let eventStore = InjectionEventStore()
@@ -1456,7 +1458,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "device-testing",
                 "runtime-env",
                 "call-order",
-                "instance-counts"
+                "instance-counts",
+                "compiler-interception"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -2085,49 +2088,13 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     }
 
     public func compilerState() -> CompilerStateResult {
-        let xcode = compiler.xcodePath()
-        let frontend: String?
-        let patched: String?
-        let intercepted: Bool
+        compilerInterception.state()
+    }
 
-        if let xcode {
-            let bin = URL(
-                fileURLWithPath: xcode
-            )
-            .appendingPathComponent(
-                "Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
-            )
-
-            let frontendURL = bin.appendingPathComponent(
-                "swift-frontend"
-            )
-            let patchedURL = URL(
-                fileURLWithPath: frontendURL.path + ".save"
-            )
-
-            frontend = frontendURL.path
-            patched = patchedURL.path
-            intercepted = FileManager.default.fileExists(
-                atPath: patchedURL.path
-            )
-        } else {
-            frontend = nil
-            patched = nil
-            intercepted = false
-        }
-
-        return CompilerStateResult(
-            xcodePath: xcode,
-            frontendPath: frontend,
-            patchedFrontendPath: patched,
-            intercepted: intercepted,
-            commandSource: intercepted
-                ? "intercepted"
-                : "build-log",
-            note: intercepted
-                ? "swift-frontend appears patched in the selected Xcode toolchain."
-                : "Using build-log compiler recovery; compiler interception is not enabled."
-        )
+    public func setCompilerInterception(
+        enabled: Bool
+    ) -> Result<CompilerStateResult, ControlError> {
+        compilerInterception.setEnabled(enabled)
     }
 
     public func profileSnapshot(
