@@ -26,6 +26,7 @@ public enum ControlAction: String, Codable, Sendable {
     case profileSnapshot = "profile_snapshot"
     case setRuntimeEnv = "set_runtime_env"
     case traceScope = "trace_scope"
+    case compilerState = "compiler_state"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -308,6 +309,31 @@ public struct LogsResult: Codable, Sendable {
     }
 }
 
+public struct CompilerStateResult: Codable, Sendable {
+    public let xcodePath: String?
+    public let frontendPath: String?
+    public let patchedFrontendPath: String?
+    public let intercepted: Bool
+    public let commandSource: String
+    public let note: String?
+
+    public init(
+        xcodePath: String?,
+        frontendPath: String?,
+        patchedFrontendPath: String?,
+        intercepted: Bool,
+        commandSource: String,
+        note: String? = nil
+    ) {
+        self.xcodePath = xcodePath
+        self.frontendPath = frontendPath
+        self.patchedFrontendPath = patchedFrontendPath
+        self.intercepted = intercepted
+        self.commandSource = commandSource
+        self.note = note
+    }
+}
+
 public struct OperationResult: Codable, Sendable {
     public let message: String
 
@@ -478,6 +504,7 @@ public struct ControlResponse: Codable, Sendable {
     public let lastError: LastErrorResult?
     public let events: InjectionEventsResult?
     public let profile: ProfileResult?
+    public let compilerState: CompilerStateResult?
     public let error: ControlError?
 
     public init(
@@ -495,6 +522,7 @@ public struct ControlResponse: Codable, Sendable {
         lastError: LastErrorResult? = nil,
         events: InjectionEventsResult? = nil,
         profile: ProfileResult? = nil,
+        compilerState: CompilerStateResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -511,6 +539,7 @@ public struct ControlResponse: Codable, Sendable {
         self.lastError = lastError
         self.events = events
         self.profile = profile
+        self.compilerState = compilerState
         self.error = error
     }
 
@@ -644,6 +673,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             profile: result
+        )
+    }
+
+    public static func compilerState(
+        id: String,
+        result: CompilerStateResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            compilerState: result
         )
     }
 
