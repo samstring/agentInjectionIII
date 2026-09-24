@@ -43,6 +43,10 @@ public protocol InjectionBackend: AnyObject {
         name: String?,
         filter: String?
     ) -> Result<TraceResult, ControlError>
+    func callOrder() -> Result<CallOrderResult, ControlError>
+    func instancesStart() -> Result<InstanceCountsResult, ControlError>
+    func instancesRead() -> Result<InstanceCountsResult, ControlError>
+    func instancesStop() -> Result<InstanceCountsResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
 }
@@ -312,6 +316,46 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             ControlError(
                 code: "TRACE_BRIDGE_NOT_READY",
                 message: "Scaffold backend has no scoped tracing bridge."
+            )
+        )
+    }
+
+    public func callOrder()
+        -> Result<CallOrderResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no call-order bridge."
+            )
+        )
+    }
+
+    public func instancesStart()
+        -> Result<InstanceCountsResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no lifetime-tracking bridge."
+            )
+        )
+    }
+
+    public func instancesRead()
+        -> Result<InstanceCountsResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no lifetime-tracking bridge."
+            )
+        )
+    }
+
+    public func instancesStop()
+        -> Result<InstanceCountsResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no lifetime-tracking bridge."
             )
         )
     }
