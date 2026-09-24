@@ -15,6 +15,7 @@ public enum ControlAction: String, Codable, Sendable {
     case touchReplay = "touch_replay"
     case logs
     case clearLogs = "clear_logs"
+    case unhideSymbols = "unhide_symbols"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -288,6 +289,14 @@ public struct LogsResult: Codable, Sendable {
     }
 }
 
+public struct OperationResult: Codable, Sendable {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
 public struct InjectionResult: Codable, Sendable {
     public let file: String
     public let compiled: Bool
@@ -362,6 +371,7 @@ public struct ControlResponse: Codable, Sendable {
     public let targets: TargetsResult?
     public let touch: TouchResult?
     public let logs: LogsResult?
+    public let operation: OperationResult?
     public let error: ControlError?
 
     public init(
@@ -375,6 +385,7 @@ public struct ControlResponse: Codable, Sendable {
         targets: TargetsResult? = nil,
         touch: TouchResult? = nil,
         logs: LogsResult? = nil,
+        operation: OperationResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -387,6 +398,7 @@ public struct ControlResponse: Codable, Sendable {
         self.targets = targets
         self.touch = touch
         self.logs = logs
+        self.operation = operation
         self.error = error
     }
 
@@ -476,6 +488,17 @@ public struct ControlResponse: Codable, Sendable {
             id: id,
             ok: true,
             logs: result
+        )
+    }
+
+    public static func operation(
+        id: String,
+        result: OperationResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            operation: result
         )
     }
 
