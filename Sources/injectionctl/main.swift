@@ -69,6 +69,12 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] env NAME [VALUE]
       injectionctl [--socket PATH] profile [LIMIT]
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
+      injectionctl [--socket PATH] trace scope frameworks [FILTER_REGEX]
+      injectionctl [--socket PATH] trace scope uikit [FILTER_REGEX]
+      injectionctl [--socket PATH] trace scope swiftui [FILTER_REGEX]
+      injectionctl [--socket PATH] trace scope main-all [FILTER_REGEX]
+      injectionctl [--socket PATH] trace scope framework NAME [FILTER_REGEX]
+      injectionctl [--socket PATH] trace scope package NAME [FILTER_REGEX]
       injectionctl [--socket PATH] trace read [LIMIT]
       injectionctl [--socket PATH] trace stop
 
@@ -379,6 +385,49 @@ case "trace":
     }
 
     switch options.arguments[1] {
+    case "scope":
+        guard options.arguments.count >= 3 else {
+            fatalUsage("trace scope requires a scope name.")
+        }
+
+        let scope = options.arguments[2]
+        let namedScopes = Set(["framework", "package"])
+        let simpleScopes = Set([
+            "frameworks", "uikit",
+            "swiftui", "main-all"
+        ])
+
+        var name: String?
+        var filter: String?
+
+        if namedScopes.contains(scope) {
+            guard options.arguments.count == 4 ||
+                  options.arguments.count == 5 else {
+                fatalUsage("trace scope \(scope) requires NAME and optional FILTER_REGEX.")
+            }
+            name = options.arguments[3]
+            if options.arguments.count == 5 {
+                filter = options.arguments[4]
+            }
+        } else if simpleScopes.contains(scope) {
+            guard options.arguments.count == 3 ||
+                  options.arguments.count == 4 else {
+                fatalUsage("trace scope \(scope) accepts optional FILTER_REGEX.")
+            }
+            if options.arguments.count == 4 {
+                filter = options.arguments[3]
+            }
+        } else {
+            fatalUsage("Unknown trace scope: \(scope)")
+        }
+
+        request = ControlRequest(
+            action: .traceScope,
+            filter: filter,
+            scope: scope,
+            name: name
+        )
+
     case "start":
         guard options.arguments.count <= 3 else {
             fatalUsage("trace start accepts at most one filter regex.")
