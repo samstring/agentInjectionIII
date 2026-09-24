@@ -1,5 +1,8 @@
 import Foundation
 import Darwin
+#if DEBUG
+import InjectionImpl
+#endif
 
 // Wire-compatible subset of the InjectionNext client/server protocol.
 // Protocol values are aligned with johnno1962/InjectionNext (MIT licensed).
@@ -1587,6 +1590,46 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
     public func clearLogs() -> LogsResult {
         runtimeServer.clearLogs()
+    }
+
+    public func unhideSymbols()
+        -> Result<OperationResult, ControlError> {
+        #if DEBUG
+        guard let intermediates =
+                compiler.intermediatesDirectory() else {
+            return .failure(
+                ControlError(
+                    code: "UNHIDE_INTERMEDIATES_NOT_FOUND",
+                    message: "Unable to locate Build/Intermediates.noindex. Build the project once in Xcode first."
+                )
+            )
+        }
+
+        do {
+            try Unhider.unhideAllObjects(
+                intermediates: intermediates
+            )
+            return .success(
+                OperationResult(
+                    message: "Swift default-argument symbols were exported under \(intermediates.path). Restart the app before injecting code that depends on those symbols."
+                )
+            )
+        } catch {
+            return .failure(
+                ControlError(
+                    code: "UNHIDE_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+        #else
+        return .failure(
+            ControlError(
+                code: "UNHIDE_DEBUG_ONLY",
+                message: "Upstream InjectionLite Unhider is only available in Debug Swift Package builds."
+            )
+        )
+        #endif
     }
 
     public func traceStart(
