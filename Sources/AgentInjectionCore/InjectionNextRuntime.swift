@@ -788,15 +788,18 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public let name = "injectionnext-headless"
 
     private let runtimeServer: InjectionNextRuntimeServer
+    private let traceServer: AgentTraceServer
     private let projectRoot: String?
     private let compiler: BuildLogCompiler
 
     public init(
         runtimeServer: InjectionNextRuntimeServer,
+        traceServer: AgentTraceServer,
         projectRoot: String? = nil,
         derivedDataRoot: String? = nil
     ) {
         self.runtimeServer = runtimeServer
+        self.traceServer = traceServer
         self.projectRoot = projectRoot
         self.compiler = BuildLogCompiler(
             projectRoot: projectRoot,
@@ -819,7 +822,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "objc",
                 "objc++",
                 "xcode-build-log",
-                "screenshot"
+                "screenshot",
+                "trace"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -996,6 +1000,25 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
+    public func traceStart(
+        filter: String?
+    ) -> Result<TraceResult, ControlError> {
+        traceServer.startTrace(filter: filter)
+    }
+
+    public func traceStop()
+        -> Result<TraceResult, ControlError> {
+        traceServer.stopTrace()
+    }
+
+    public func traceRead(
+        limit: Int?
+    ) -> Result<TraceResult, ControlError> {
+        .success(
+            traceServer.readTrace(limit: limit)
+        )
+    }
+
     public func doctor(path: String?) -> DoctorReport {
         let runtime = runtimeServer.status()
         let compilerDiagnostics = compiler.diagnostics(
@@ -1094,6 +1117,17 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 message: runtimeInstalled
                     ? "Local runtime bundle installed: \(localRuntime)"
                     : "Local runtime bundle not found at \(localRuntime). Run scripts/install-runtime.sh if this Mac should use agent mode."
+            )
+        )
+
+        let trace = traceServer.status()
+        checks.append(
+            DoctorCheck(
+                name: "trace_bridge",
+                state: trace.connected ? .pass : .warning,
+                message: trace.connected
+                    ? "AgentTraceBridge is connected on 127.0.0.1:\(traceServer.port)."
+                    : "AgentTraceBridge is not connected. Injection still works, but trace start/read/stop will be unavailable."
             )
         )
 
