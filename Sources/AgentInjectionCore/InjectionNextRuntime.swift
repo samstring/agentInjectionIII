@@ -1308,6 +1308,7 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     private let compiler: BuildLogCompiler
     private let codeSigningIdentity: String?
     private let swiftUIPreparer = SwiftUIPreparer()
+    private let eventStore = InjectionEventStore()
     private let backendStateLock = NSLock()
     private var lastErrorValue: ControlError?
     private var lastSourceValue: String?
@@ -1362,7 +1363,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "unhide-symbols",
                 "swiftui-prepare",
                 "xcode-selection",
-                "last-error"
+                "last-error",
+                "lifecycle-events"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -1394,11 +1396,18 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 code: "RUNTIME_NOT_CONNECTED",
                 message: "Launch a DEBUG app containing the InjectionNext client runtime."
             )
+            let firstSource = files.first.map {
+                normalize(path: $0)
+            }
             record(
                 error: error,
-                source: files.first.map {
-                    normalize(path: $0)
-                }
+                source: firstSource
+            )
+            eventStore.append(
+                phase: "failed",
+                source: firstSource,
+                target: target,
+                message: error.message
             )
             return BackendInjectionResponse(
                 results: files.map {
@@ -1419,11 +1428,18 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 code: "RUNTIME_HANDSHAKE_INCOMPLETE",
                 message: "Runtime is connected but platform metadata is not ready."
             )
+            let firstSource = files.first.map {
+                normalize(path: $0)
+            }
             record(
                 error: error,
-                source: files.first.map {
-                    normalize(path: $0)
-                }
+                source: firstSource
+            )
+            eventStore.append(
+                phase: "failed",
+                source: firstSource,
+                target: runtime.id ?? target,
+                message: error.message
             )
             return BackendInjectionResponse(
                 results: files.map {
@@ -1443,6 +1459,13 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
         for input in files {
             let source = normalize(path: input)
+            let targetID = runtime.id ?? target
+
+            eventStore.append(
+                phase: "compiling",
+                source: source,
+                target: targetID
+            )
 
             switch compiler.compileAndLink(
                 source: source,
@@ -1457,6 +1480,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                         source: source
                     )
                 }
+                eventStore.append(
+                    phase: "failed",
+                    source: source,
+                    target: targetID,
+                    message: error.message
+                )
                 results.append(
                     InjectionResult(
                         file: source,
@@ -1467,9 +1496,22 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 )
 
             case .success(let artifact):
+                eventStore.append(
+                    phase: "compiled",
+                    source: source,
+                    target: targetID,
+                    compileMilliseconds: artifact.compileMilliseconds,
+                    linkMilliseconds: artifact.linkMilliseconds
+                )
                 if platform == "iPhoneOS" ||
                    platform == "AppleTVOS" ||
                    platform == "XROS" {
+                    eventStore.append(
+                        phase: "signing",
+                        source: source,
+                        target: targetID
+                    )
+
                     guard let identity = codeSigningIdentity,
                           !identity.isEmpty else {
                         compiler.remove(artifact)
@@ -1484,6 +1526,14 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                                 source: source
                             )
                         }
+                        eventStore.append(
+                            phase: "failed",
+                            source: source,
+                            target: targetID,
+                            message: error.message,
+                            compileMilliseconds: artifact.compileMilliseconds,
+                            linkMilliseconds: artifact.linkMilliseconds
+                        )
                         results.append(
                             InjectionResult(
                                 file: source,
@@ -1526,6 +1576,14 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                     }
                 }
 
+                eventStore.append(
+                    phase: "injecting",
+                    source: source,
+                    target: targetID,
+                    compileMilliseconds: artifact.compileMilliseconds,
+                    linkMilliseconds: artifact.linkMilliseconds
+                )
+
                 let runtimeResult = runtimeServer.loadDylib(
                     path: artifact.dylib,
                     target: target
@@ -1547,6 +1605,17 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                         source: source
                     )
                 }
+
+                eventStore.append(
+                    phase: runtimeResult.injected
+                        ? "injected"
+                        : "failed",
+                    source: source,
+                    target: targetID,
+                    message: runtimeResult.message,
+                    compileMilliseconds: artifact.compileMilliseconds,
+                    linkMilliseconds: artifact.linkMilliseconds
+                )
 
                 results.append(
                     InjectionResult(
@@ -1879,6 +1948,17 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             source: lastSourceValue,
             error: lastErrorValue
         )
+    }
+
+    public func events(
+        limit: Int?
+    ) -> InjectionEventsResult {
+        eventStore.drain(limit: limit)
+    }
+
+    public func clearEvents()
+        -> InjectionEventsResult {
+        eventStore.clear()
     }
 
     public func traceStart(
