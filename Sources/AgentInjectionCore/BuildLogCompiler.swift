@@ -165,18 +165,49 @@ public final class BuildLogCompiler {
         let object = "\(workDir)/\(token).o"
         let dylib = "\(workDir)/\(token).dylib"
 
-        let compileCommand = makeSingleFileCommand(
+        var compileCommand = makeSingleFileCommand(
             original: located.command,
             source: source,
             object: object
         )
 
+        var temporaryInputs: [String] = []
+        switch prepareMissingInputs(
+            command: compileCommand,
+            source: source,
+            activityLogPath: located.logPath
+        ) {
+        case .success(let prepared):
+            compileCommand = prepared.command
+            temporaryInputs = prepared.temporaryFiles
+
+        case .failure(let error):
+            invalidate(cacheKey)
+            return .failure(error)
+        }
+
+        defer {
+            for path in temporaryInputs {
+                try? fileManager.removeItem(atPath: path)
+            }
+        }
+
         let compileStart = Date.timeIntervalSinceReferenceDate
-        let compileResult = Shell.run(
+        var compileResult = Shell.run(
             executable: "/bin/zsh",
             arguments: ["-lc", compileCommand],
             currentDirectory: projectRoot
         )
+
+        if compileResult.status != 0,
+           recoverMissingPCH(from: compileResult.combinedOutput) {
+            compileResult = Shell.run(
+                executable: "/bin/zsh",
+                arguments: ["-lc", compileCommand],
+                currentDirectory: projectRoot
+            )
+        }
+
         let compileMs =
             (Date.timeIntervalSinceReferenceDate - compileStart) * 1000
 
@@ -248,6 +279,201 @@ public final class BuildLogCompiler {
     public func remove(_ artifact: Artifact) {
         try? fileManager.removeItem(atPath: artifact.object)
         try? fileManager.removeItem(atPath: artifact.dylib)
+    }
+
+    private struct PreparedCompileCommand {
+        let command: String
+        let temporaryFiles: [String]
+    }
+
+    private func prepareMissingInputs(
+        command: String,
+        source: String,
+        activityLogPath: String
+    ) -> Result<PreparedCompileCommand, ControlError> {
+        guard source.hasSuffix(".swift"),
+              let token = firstRegexCapture(
+                " -filelist (\(quotedArgumentRegex))",
+                in: command
+              ) else {
+            return .success(
+                PreparedCompileCommand(
+                    command: command,
+                    temporaryFiles: []
+                )
+            )
+        }
+
+        let originalFileList = decodeShellToken(token)
+        guard !originalFileList.isEmpty,
+              !fileManager.fileExists(atPath: originalFileList) else {
+            return .success(
+                PreparedCompileCommand(
+                    command: command,
+                    temporaryFiles: []
+                )
+            )
+        }
+
+        guard let recovered = recoverFileList(
+            source: source,
+            activityLogPath: activityLogPath
+        ) else {
+            return .failure(
+                ControlError(
+                    code: "FILELIST_MISSING",
+                    message: """
+                    Swift compiler file list no longer exists: \(originalFileList).                     Rebuild the app in Xcode, then retry injection.                     EMIT_FRONTEND_COMMAND_LINES=YES is recommended for Debug.
+                    """
+                )
+            )
+        }
+
+        let replacement = " -filelist \(shellQuote(recovered))"
+        let rewritten = replacingRegex(
+            " -filelist \(quotedArgumentRegex)",
+            in: command,
+            with: replacement
+        )
+
+        return .success(
+            PreparedCompileCommand(
+                command: rewritten,
+                temporaryFiles: [recovered]
+            )
+        )
+    }
+
+    private func recoverFileList(
+        source: String,
+        activityLogPath: String
+    ) -> String? {
+        let result = Shell.run(
+            executable: "/usr/bin/gunzip",
+            arguments: ["-c", activityLogPath]
+        )
+        guard result.status == 0 else { return nil }
+
+        let sourceName = URL(fileURLWithPath: source).lastPathComponent
+        let pattern = " -output-file-map (\(quotedArgumentRegex))"
+
+        for rawLine in result.stdout
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(rawLine)
+            guard line.contains(sourceName),
+                  let token = firstRegexCapture(pattern, in: line)
+            else {
+                continue
+            }
+
+            let outputMapPath = decodeShellToken(token)
+            guard fileManager.fileExists(atPath: outputMapPath),
+                  let data = try? Data(
+                    contentsOf: URL(fileURLWithPath: outputMapPath)
+                  ),
+                  let json = try? JSONSerialization.jsonObject(with: data),
+                  let map = json as? [String: Any]
+            else {
+                continue
+            }
+
+            let keys = Array(map.keys)
+            guard keys.contains(source) ||
+                    keys.contains(where: {
+                        URL(fileURLWithPath: $0).lastPathComponent == sourceName
+                    }) else {
+                continue
+            }
+
+            let directory = "/tmp/agentInjectionIII"
+            try? fileManager.createDirectory(
+                atPath: directory,
+                withIntermediateDirectories: true
+            )
+
+            let recovered = directory +
+                "/filelist-\(UUID().uuidString).txt"
+            let contents = keys.sorted().joined(separator: "\n") + "\n"
+
+            do {
+                try contents.write(
+                    toFile: recovered,
+                    atomically: false,
+                    encoding: .utf8
+                )
+                return recovered
+            } catch {
+                return nil
+            }
+        }
+
+        return nil
+    }
+
+    private func recoverMissingPCH(from output: String) -> Bool {
+        guard let missing = firstRegexCapture(
+            #"PCH file '([^']+)' not found"#,
+            in: output
+        ) else {
+            return false
+        }
+
+        let missingURL = URL(fileURLWithPath: missing)
+        let directory = missingURL.deletingLastPathComponent()
+        let filename = missingURL.lastPathComponent
+
+        guard let match = firstRegexCaptures(
+            #"^(.*-Bridging-Header-swift_)[^-]+(-clang_[^/]+\.pch)$"#,
+            in: filename
+        ),
+        match.count == 2,
+        let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+
+        let prefix = match[0]
+        let suffix = match[1]
+        let candidates = files
+            .filter {
+                let name = $0.lastPathComponent
+                return name.hasPrefix(prefix) &&
+                    name.hasSuffix(suffix) &&
+                    $0.path != missing
+            }
+            .sorted {
+                let left = (
+                    try? $0.resourceValues(
+                        forKeys: [.contentModificationDateKey]
+                    ).contentModificationDate
+                ) ?? .distantPast
+                let right = (
+                    try? $1.resourceValues(
+                        forKeys: [.contentModificationDateKey]
+                    ).contentModificationDate
+                ) ?? .distantPast
+                return left > right
+            }
+
+        guard let candidate = candidates.first else {
+            return false
+        }
+
+        try? fileManager.removeItem(atPath: missing)
+
+        do {
+            try fileManager.createSymbolicLink(
+                atPath: missing,
+                withDestinationPath: candidate.path
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func locateCompilationCommand(
@@ -654,6 +880,51 @@ public final class BuildLogCompiler {
             ),
             withTemplate: replacement
         )
+    }
+
+    private func firstRegexCaptures(
+        _ pattern: String,
+        in value: String
+    ) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                in: value,
+                range: NSRange(
+                    value.startIndex..<value.endIndex,
+                    in: value
+                )
+              ),
+              match.numberOfRanges > 1
+        else {
+            return nil
+        }
+
+        var captures: [String] = []
+        for index in 1..<match.numberOfRanges {
+            guard let range = Range(
+                match.range(at: index),
+                in: value
+            ) else {
+                return nil
+            }
+            captures.append(String(value[range]))
+        }
+        return captures
+    }
+
+    private func decodeShellToken(_ token: String) -> String {
+        guard token.count >= 2 else {
+            return unescape(token)
+        }
+
+        if (token.hasPrefix("\"") && token.hasSuffix("\"")) ||
+           (token.hasPrefix("'") && token.hasSuffix("'")) {
+            return unescape(
+                String(token.dropFirst().dropLast())
+            )
+        }
+
+        return unescape(token)
     }
 
     private func firstRegexCapture(
