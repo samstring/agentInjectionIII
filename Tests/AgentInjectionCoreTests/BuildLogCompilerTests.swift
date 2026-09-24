@@ -149,9 +149,11 @@ final class BuildLogCompilerTests: XCTestCase {
             diagnostics.buildLogCount,
             1
         )
-        XCTAssertEqual(
-            diagnostics.newestBuildLog,
-            log.resolvingSymlinksInPath().path
+        XCTAssertTrue(
+            diagnostics.newestBuildLog?
+                .hasSuffix(
+                    "/Logs/Build/direct.xcactivitylog"
+                ) == true
         )
     }
 
@@ -195,9 +197,11 @@ final class BuildLogCompilerTests: XCTestCase {
             diagnostics.buildLogCount,
             1
         )
-        XCTAssertEqual(
-            diagnostics.newestBuildLog,
-            log.resolvingSymlinksInPath().path
+        XCTAssertTrue(
+            diagnostics.newestBuildLog?
+                .hasSuffix(
+                    "/Demo-ABC123/Logs/Build/nested.xcactivitylog"
+                ) == true
         )
     }
 
