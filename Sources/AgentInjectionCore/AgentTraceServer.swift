@@ -23,6 +23,7 @@ public final class AgentTraceServer {
     private var active = false
     private var activeFilter: String?
     private var pendingCommand: PendingTraceCommand?
+    private var pendingProfile: PendingProfileCommand?
 
     private let maximumBufferedEvents = 10_000
 
@@ -292,6 +293,119 @@ public final class AgentTraceServer {
         return .success(result)
     }
 
+    public func profileSnapshot(
+        limit: Int?
+    ) -> Result<ProfileResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingProfileCommand()
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingProfile == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "PROFILE_COMMAND_BUSY",
+                    message: "Another profile snapshot is still pending."
+                )
+            )
+        }
+        bridge = connected
+        pendingProfile = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "profile_snapshot",
+                filter: nil
+            )
+        } catch {
+            clearProfilePending(pending)
+            return .failure(
+                ControlError(
+                    code: "PROFILE_COMMAND_FAILED",
+                    message: "Unable to request profiling stats: \(error)"
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 10
+        ) == .success else {
+            clearProfilePending(pending)
+            return .failure(
+                ControlError(
+                    code: "PROFILE_COMMAND_TIMEOUT",
+                    message: "Timed out waiting for SwiftTrace profiling stats."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearProfilePending(pending)
+            return .failure(
+                ControlError(
+                    code: "PROFILE_SNAPSHOT_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        let elapsed = pending.elapsed ?? [:]
+        let invocations = pending.invocations ?? [:]
+        let methods = Set(
+            elapsed.keys
+        ).union(invocations.keys)
+
+        var stats = methods.map { method in
+            let total = elapsed[method] ?? 0
+            let count = invocations[method] ?? 0
+
+            return ProfileStat(
+                method: method,
+                elapsedSeconds: total,
+                invocations: count,
+                averageMilliseconds: count > 0
+                    ? total * 1000 / Double(count)
+                    : 0
+            )
+        }
+        .sorted {
+            if $0.elapsedSeconds ==
+               $1.elapsedSeconds {
+                return $0.invocations >
+                    $1.invocations
+            }
+            return $0.elapsedSeconds >
+                $1.elapsedSeconds
+        }
+
+        if let limit {
+            stats = Array(
+                stats.prefix(
+                    max(0, min(limit, 2_000))
+                )
+            )
+        }
+
+        clearProfilePending(pending)
+
+        return .success(
+            ProfileResult(
+                connected: true,
+                stats: stats
+            )
+        )
+    }
+
     /// Returns and removes the oldest buffered trace events.
     public func readTrace(
         limit: Int?
@@ -361,6 +475,11 @@ public final class AgentTraceServer {
                         self.pendingCommand = nil
                         pending.semaphore.signal()
                     }
+                    if let profile = self.pendingProfile {
+                        profile.error = "AgentTraceBridge disconnected."
+                        self.pendingProfile = nil
+                        profile.semaphore.signal()
+                    }
                 }
                 self.lock.unlock()
             }
@@ -370,6 +489,20 @@ public final class AgentTraceServer {
     private func handle(
         _ message: TraceBridgeMessage
     ) {
+        if message.type == "profile" {
+            lock.lock()
+            let pending = pendingProfile
+            if let pending {
+                pending.elapsed = message.elapsed
+                pending.invocations =
+                    message.invocations
+                pendingProfile = nil
+                pending.semaphore.signal()
+            }
+            lock.unlock()
+            return
+        }
+
         if message.type == "state" {
             lock.lock()
             let pending = pendingCommand
@@ -386,6 +519,14 @@ public final class AgentTraceServer {
                 }
             }
 
+            if message.state == "error",
+               let profile = pendingProfile {
+                profile.error = message.error
+                    ?? "Trace bridge reported an unknown error."
+                pendingProfile = nil
+                profile.semaphore.signal()
+            }
+
             lock.unlock()
             return
         }
@@ -399,6 +540,16 @@ public final class AgentTraceServer {
         lock.lock()
         if pendingCommand === pending {
             pendingCommand = nil
+        }
+        lock.unlock()
+    }
+
+    private func clearProfilePending(
+        _ pending: PendingProfileCommand
+    ) {
+        lock.lock()
+        if pendingProfile === pending {
+            pendingProfile = nil
         }
         lock.unlock()
     }
@@ -432,6 +583,13 @@ public final class AgentTraceServer {
     }
 }
 
+private final class PendingProfileCommand {
+    let semaphore = DispatchSemaphore(value: 0)
+    var elapsed: [String: Double]?
+    var invocations: [String: Int]?
+    var error: String?
+}
+
 private final class PendingTraceCommand {
     let expectedState: String
     let semaphore = DispatchSemaphore(value: 0)
@@ -449,6 +607,8 @@ private struct TraceBridgeMessage: Decodable {
     let indent: Int?
     let state: String?
     let error: String?
+    let elapsed: [String: Double]?
+    let invocations: [String: Int]?
 }
 
 private struct TraceBridgeCommand: Encodable {
@@ -514,7 +674,7 @@ private final class TraceBridgeClient {
                 onEvent(message)
             }
 
-            if buffer.count > 1024 * 1024 {
+            if buffer.count > 8 * 1024 * 1024 {
                 buffer.removeAll(keepingCapacity: true)
             }
         }
