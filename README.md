@@ -1,14 +1,12 @@
 # agentInjectionIII
 
-Agent-first, headless code injection control plane for iOS development.
+Agent-first, headless code injection for iOS development.
 
-The project is being built around one rule:
-
-> **An AI agent explicitly decides when code is injected. Saving a source file must not be the control API.**
+> **An AI agent explicitly decides when code is injected. Saving a source file is not the control API.**
 
 ## Current status
 
-Phase 1 establishes the control plane:
+The repository now has a real end-to-end headless path for iOS Simulator experiments:
 
 ```text
 AI Agent
@@ -20,120 +18,314 @@ injectionctl
    v
 injectiond
    |
-   v
-InjectionBackend
+   +--> BuildLogCompiler
+   |      |
+   |      +--> find original Xcode compile command
+   |      +--> preserve CocoaPods / Swift / ObjC flags
+   |      +--> compile one source file
+   |      +--> link injection dylib
    |
-   +-- Phase 1: scaffold backend
-   |
-   +-- Next: InjectionNext compiler + InjectionServer backend
+   +--> InjectionNext-compatible runtime server
+          |
+          | TCP 127.0.0.1:8887
+          v
+      iOSInjection.bundle
+          |
+          v
+      running Simulator app
 ```
 
-The first implementation intentionally does **not** pretend that injection is already wired. The CLI/daemon protocol is real; the backend reports that it is not ready until the InjectionNext engine is connected.
+The important trigger is:
 
-## Goals
-
-- Headless operation. No menu-bar app required in the final architecture.
-- Explicit agent-controlled injection: `injectionctl inject <files...>`.
-- Structured JSON responses suitable for Codex/ChatGPT/other agents.
-- Objective-C + Swift support by reusing the original Xcode compiler invocations.
-- CocoaPods-friendly: do not reconstruct compiler flags by hand.
-- A thin DEBUG-only client runtime in the target iOS app.
-- Keep the control plane independent from the injection implementation.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    Agent["AI Agent"] --> CLI["injectionctl"]
-    CLI -->|"JSON / Unix domain socket"| Daemon["injectiond"]
-    Daemon --> Router["ControlRouter"]
-    Router --> Backend["InjectionBackend"]
-
-    subgraph Future["Injection backend (next phase)"]
-        Backend --> Engine["InjectionEngine"]
-        Engine --> Compiler["NextCompiler / clang / swift-frontend"]
-        Compiler --> Linker["dylib link + codesign"]
-        Linker --> Server["InjectionServer"]
-    end
-
-    subgraph App["iOS DEBUG app"]
-        Runtime["Injection client runtime"]
-        Code["Objective-C + Swift app code"]
-        Runtime --> Code
-    end
-
-    Server <-->|"injection protocol"| Runtime
+```text
+Agent edits files
+   -> Agent decides the edit is complete
+   -> injectionctl inject Foo.swift Bar.m
+   -> compile / link / inject
 ```
 
-## Commands
+There is no file watcher in the control path.
 
-Build:
+## What is implemented
+
+- `injectionctl` JSON CLI
+- `injectiond` long-running daemon
+- Unix Domain Socket control plane
+- InjectionNext-compatible runtime handshake (`INJECTION_VERSION=4001`)
+- local Simulator runtime connection on TCP port `8887`
+- explicit `load-dylib` command
+- explicit `inject FILE...` command
+- Xcode `.xcactivitylog` lookup
+- Swift single-file recompilation
+- Objective-C / Objective-C++ single-file recompilation
+- dylib linking
+- runtime load/result reporting
+- optional local runtime installation
+- DEBUG-only project bootstrap that can coexist with teammates using InjectionIII.app
+
+The build-log compiler is intentionally focused on normal Xcode/CocoaPods projects first. Bazel, device code signing, tracing, screenshots and touch replay are later phases.
+
+## Build
 
 ```bash
 swift build
 ```
 
-Run the daemon:
+## Install the local iOS runtime
+
+This builds InjectionNext's iOS Simulator injection bundle locally and installs it under your home directory:
 
 ```bash
-swift run injectiond
+bash scripts/install-runtime.sh
 ```
 
-Check status:
+Default location:
+
+```text
+~/.agentInjectionIII/runtime/iOSInjection.bundle
+```
+
+The installer patches the local bundle with:
+
+```text
+INJECTION_HOST=127.0.0.1
+INJECTION_NOSTANDALONE=1
+```
+
+`INJECTION_NOSTANDALONE=1` is important: if `injectiond` is unavailable, the runtime must not silently fall back to the classic save-and-auto-inject watcher.
+
+## Integrate into an existing OC + Swift + CocoaPods app
+
+No Podfile change is required.
+
+### 1. Add the bootstrap
+
+Copy:
+
+```text
+Integration/AgentInjectionBootstrap.h
+Integration/AgentInjectionBootstrap.m
+```
+
+into the app target.
+
+Call it during DEBUG startup:
+
+```objc
+#if DEBUG
+[AgentInjectionBootstrap start];
+#endif
+```
+
+The bootstrap behavior is:
+
+```text
+embedded iOSInjection.bundle exists
+        -> load agent runtime
+
+otherwise
+        -> optionally fall back to /Applications/InjectionIII.app
+```
+
+This lets other developers keep their existing InjectionIII.app workflow.
+
+### 2. Add an optional Debug Run Script phase
+
+Use:
+
+```bash
+"${SRCROOT}/path/to/agentInjectionIII/scripts/embed-runtime.sh"
+```
+
+If `~/.agentInjectionIII/runtime/iOSInjection.bundle` does not exist, the script is a no-op. Therefore teammates who have not installed agentInjectionIII are unaffected.
+
+### 3. Keep the existing Injection build settings
+
+The app's Debug target should still have the settings required by InjectionIII/InjectionNext, in particular:
+
+```text
+Other Linker Flags:
+-Xlinker
+-interposable
+```
+
+For modern Xcode Swift recompilation, also use:
+
+```text
+EMIT_FRONTEND_COMMAND_LINES = YES
+```
+
+If your team already uses InjectionIII successfully, these settings may already exist.
+
+## Run
+
+Start the daemon from the project repository root when possible:
+
+```bash
+swift run injectiond --project /absolute/path/to/YourProject
+```
+
+It exposes:
+
+```text
+control socket: /tmp/agentInjectionIII.sock
+runtime TCP:    127.0.0.1:8887
+```
+
+Then launch the DEBUG app in Simulator.
+
+Check connection:
 
 ```bash
 swift run injectionctl status
 ```
 
-Request injection:
+When the runtime is connected, `backend.appConnected` should be true.
+
+## Inject source explicitly
+
+Swift:
 
 ```bash
-swift run injectionctl inject /absolute/path/Foo.swift /absolute/path/Bar.m
+swift run injectionctl inject \
+  /absolute/path/Sources/FeedViewController.swift
 ```
 
-The default socket is:
-
-```text
-/tmp/agentInjectionIII.sock
-```
-
-Override it with:
+Objective-C:
 
 ```bash
-swift run injectiond --socket /tmp/my-injection.sock
-swift run injectionctl --socket /tmp/my-injection.sock status
+swift run injectionctl inject \
+  /absolute/path/Sources/FeedViewController.m
 ```
 
-## Protocol
+Multiple files:
 
-One newline-delimited JSON request per connection.
+```bash
+swift run injectionctl inject \
+  /absolute/path/Foo.swift \
+  /absolute/path/Bar.m
+```
 
-Example:
+The daemon:
+
+1. finds the most recent Xcode build log containing the source,
+2. recovers the original compiler invocation,
+3. keeps the project's real include/module/framework/bridging-header flags,
+4. recompiles only that source,
+5. links a dylib,
+6. copies it into the connected Simulator app's temporary directory,
+7. tells the InjectionNext runtime to load and patch it,
+8. waits for `injected` / `failed`,
+9. returns structured JSON to the agent.
+
+## Low-level runtime test
+
+If you already have a compatible injection dylib, bypass source compilation:
+
+```bash
+swift run injectionctl load-dylib /tmp/test-injection.dylib
+```
+
+This is useful for separating runtime transport problems from compiler problems.
+
+## Example result
+
+Success:
 
 ```json
 {
-  "id": "0C1A...",
-  "action": "inject",
-  "files": [
-    "/repo/Sources/Foo.swift"
+  "ok": true,
+  "injections": [
+    {
+      "file": "/repo/Sources/Foo.swift",
+      "compiled": true,
+      "injected": true,
+      "message": "compile 312ms, link 41ms; Runtime loaded and patched dylib."
+    }
   ]
 }
 ```
 
-Response:
+Compile failure:
 
 ```json
 {
-  "id": "0C1A...",
   "ok": false,
   "error": {
-    "code": "BACKEND_NOT_READY",
-    "message": "Injection engine is not connected yet."
-  }
+    "code": "COMPILE_FAILED",
+    "message": "..."
+  },
+  "injections": [
+    {
+      "file": "/repo/Sources/Foo.swift",
+      "compiled": false,
+      "injected": false,
+      "message": "..."
+    }
+  ]
 }
 ```
 
-## Implementation roadmap
+## Architecture
+
+```mermaid
+flowchart TD
+    Agent["AI Agent / Codex / ChatGPT"] --> CLI["injectionctl"]
+
+    CLI -->|"JSON / Unix Domain Socket"| Daemon["injectiond"]
+
+    subgraph Host["macOS"]
+        Daemon --> Router["ControlRouter"]
+        Router --> Backend["InjectionNextRuntimeBackend"]
+        Backend --> Compiler["BuildLogCompiler"]
+        Compiler --> Logs["Xcode xcactivitylog"]
+        Compiler --> Swift["swift-frontend"]
+        Compiler --> Clang["clang"]
+        Swift --> Obj["object file"]
+        Clang --> Obj
+        Obj --> Link["xcrun clang -> dylib"]
+        Backend --> RuntimeServer["InjectionNext runtime server :8887"]
+    end
+
+    subgraph App["iOS Simulator DEBUG app"]
+        Client["iOSInjection.bundle"]
+        Code["Swift + Objective-C + Pods"]
+        Client --> Code
+    end
+
+    Link --> Backend
+    RuntimeServer <-->|"InjectionNext wire protocol"| Client
+```
+
+## Why this works with CocoaPods
+
+agentInjectionIII does not reconstruct your project's compile flags from the Podfile.
+
+Instead it reuses the command Xcode already used, preserving things such as:
+
+- Header Search Paths
+- Framework Search Paths
+- module maps
+- bridging headers
+- CocoaPods defines
+- SDK
+- architecture
+- Swift frontend flags
+
+This is the same general strategy used by InjectionLite/InjectionNext.
+
+## Current limitations
+
+- Simulator first; real-device code signing is not implemented yet.
+- Build-log lookup requires a successful/recent Xcode build.
+- Swift works best with `EMIT_FRONTEND_COMMAND_LINES=YES`.
+- Whole-module compilation is not a good fit for single-file injection.
+- Bazel is not connected yet.
+- compiler command persistence is currently in-memory.
+- trace / screenshot / touch APIs are not yet exposed through `injectionctl`.
+- CI is configured, but GitHub-hosted macOS jobs on this private repository are currently failing before any workflow steps are reported, so CI has not yet verified the current Swift build.
+
+## Roadmap
 
 ### Phase 1 — control plane
 
@@ -141,68 +333,45 @@ Response:
 - [x] `injectionctl`
 - [x] `injectiond`
 - [x] Unix Domain Socket transport
-- [x] JSON request/response protocol
-- [x] `status`
-- [x] `inject <files...>` request path
+- [x] structured JSON protocol
 - [x] backend abstraction
-- [ ] CI build verification
 
-### Phase 2 — real InjectionNext backend
+### Phase 2 — headless injection
 
-Extract/reuse the backend path that currently ends at:
+- [x] InjectionNext-compatible runtime TCP server
+- [x] runtime handshake / platform / architecture / temp path
+- [x] `load-dylib`
+- [x] Xcode build-log compiler lookup
+- [x] Swift source recompile path
+- [x] ObjC / ObjC++ source recompile path
+- [x] dylib link path
+- [x] `inject FILE...` -> runtime load
+- [ ] validate end-to-end against a real CocoaPods app
+- [ ] persistent compiler-command cache
+- [ ] improve Xcode log parser edge cases
 
-```text
-InjectionHybrid
-  -> compiler selection
-  -> NextCompiler.inject(source:)
-  -> recompile
-  -> link dylib
-  -> codesign
-  -> InjectionServer
-  -> client runtime
-```
+### Phase 3 — agent observability
 
-The important refactor is to make the trigger:
+- [ ] injection lifecycle events
+- [ ] structured compiler diagnostics
+- [ ] trace / untrace
+- [ ] method-call stream
+- [ ] screenshot
+- [ ] touch record/replay
 
-```text
-CLI command -> InjectionEngine.inject(files)
-```
+### Phase 4 — devices / advanced build systems
 
-instead of:
+- [ ] real-device signing and transport
+- [ ] Bazel compiler lookup
+- [ ] multiple simultaneous app clients
+- [ ] target/client selection
 
-```text
-FileWatcher -> InjectionHybrid.inject(source)
-```
+## Upstream
 
-### Phase 3 — DEBUG app runtime integration
+The runtime wire protocol and build-log strategy are intentionally compatible with John Holdsworth's InjectionNext / InjectionLite projects.
 
-Support a thin project-side bootstrap that can coexist with teammates using InjectionIII.app.
-
-Target shape:
-
-```text
-Shared project
-   |
-   +-- normal teammate -> InjectionIII.app
-   |
-   +-- agent mode -> embedded client runtime -> injectiond
-```
-
-No Podfile changes should be required for the initial integration.
-
-### Phase 4 — agent observability
-
-- trace / untrace
-- compiler diagnostics
-- structured injection events: detecting / compiled / injected / failed
-- screenshots
-- touch record/replay
-- method-call traces
-
-## Upstream direction
-
-The backend design is intentionally aligned with InjectionNext's existing implementation, especially its `NextCompiler.inject(source:)`, compiler invocation cache, `InjectionServer`, and Unix-socket control ideas. We will reuse/refactor those concepts rather than inventing a second injection engine.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
-License is intentionally not selected yet. Before copying or redistributing upstream implementation code, confirm and preserve the applicable upstream license and notices.
+No project-level license has been selected yet. Third-party components and derived ideas retain their upstream notices.
