@@ -313,6 +313,33 @@ public final class ControlRouter {
                 result: backend.clearEvents()
             )
 
+        case .setRuntimeEnv:
+            guard let environment = request.environment,
+                  !environment.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_ENVIRONMENT",
+                    message: "set_runtime_env requires at least one INJECTION_* setting."
+                )
+            }
+
+            switch backend.setRuntimeEnvironment(
+                environment,
+                target: request.target
+            ) {
+            case .success(let result):
+                return .operation(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .profileSnapshot:
             switch backend.profileSnapshot(
                 limit: request.limit
