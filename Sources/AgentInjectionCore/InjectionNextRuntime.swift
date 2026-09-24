@@ -689,10 +689,11 @@ public final class InjectionNextRuntimeServer {
 }
 
 public final class InjectionNextRuntimeBackend: InjectionBackend {
-    public let name = "injectionnext-runtime"
+    public let name = "injectionnext-headless"
 
     private let runtimeServer: InjectionNextRuntimeServer
     private let projectRoot: String?
+    private let compiler: BuildLogCompiler
 
     public init(
         runtimeServer: InjectionNextRuntimeServer,
@@ -700,6 +701,7 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     ) {
         self.runtimeServer = runtimeServer
         self.projectRoot = projectRoot
+        self.compiler = BuildLogCompiler(projectRoot: projectRoot)
     }
 
     public func status() -> BackendStatus {
@@ -707,35 +709,125 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
         return BackendStatus(
             name: name,
-            ready: false,
+            ready: runtime.connected,
             appConnected: runtime.connected,
             capabilities: [
                 "status",
+                "source-inject",
                 "load-dylib",
-                "source-inject-pending"
+                "swift",
+                "objc",
+                "objc++",
+                "xcode-build-log"
             ],
             detail: runtime.connected
-                ? "InjectionNext runtime connected; source recompilation backend is the next phase."
+                ? "InjectionNext runtime connected; explicit source injection is available."
                 : "Listening for InjectionNext runtime on 127.0.0.1:\(runtimeServer.port)."
         )
     }
 
     public func inject(files: [String]) -> BackendInjectionResponse {
-        let results = files.map { file in
-            InjectionResult(
-                file: normalize(path: file),
-                compiled: false,
-                injected: false,
-                message: "Source compiler backend is not connected yet."
+        let runtime = runtimeServer.status()
+
+        guard runtime.connected else {
+            return BackendInjectionResponse(
+                results: files.map {
+                    InjectionResult(
+                        file: normalize(path: $0),
+                        compiled: false,
+                        injected: false,
+                        message: "No InjectionNext runtime is connected."
+                    )
+                },
+                error: ControlError(
+                    code: "RUNTIME_NOT_CONNECTED",
+                    message: "Launch a DEBUG app containing the InjectionNext client runtime."
+                )
             )
+        }
+
+        guard let platform = runtime.platform,
+              let arch = runtime.arch else {
+            return BackendInjectionResponse(
+                results: files.map {
+                    InjectionResult(
+                        file: normalize(path: $0),
+                        compiled: false,
+                        injected: false,
+                        message: "Runtime handshake has not reported platform/architecture yet."
+                    )
+                },
+                error: ControlError(
+                    code: "RUNTIME_HANDSHAKE_INCOMPLETE",
+                    message: "Runtime is connected but platform metadata is not ready."
+                )
+            )
+        }
+
+        var results: [InjectionResult] = []
+        var firstError: ControlError?
+
+        for input in files {
+            let source = normalize(path: input)
+
+            switch compiler.compileAndLink(
+                source: source,
+                platform: platform,
+                arch: arch
+            ) {
+            case .failure(let error):
+                if firstError == nil {
+                    firstError = error
+                }
+                results.append(
+                    InjectionResult(
+                        file: source,
+                        compiled: false,
+                        injected: false,
+                        message: error.message
+                    )
+                )
+
+            case .success(let artifact):
+                let runtimeResult = runtimeServer.loadDylib(
+                    path: artifact.dylib
+                )
+                compiler.remove(artifact)
+
+                let timing = String(
+                    format: "compile %.0fms, link %.0fms",
+                    artifact.compileMilliseconds,
+                    artifact.linkMilliseconds
+                )
+                let detail = [
+                    timing,
+                    runtimeResult.message
+                ]
+                .compactMap { $0 }
+                .joined(separator: "; ")
+
+                if !runtimeResult.injected, firstError == nil {
+                    firstError = ControlError(
+                        code: "DYLIB_INJECTION_FAILED",
+                        message: runtimeResult.message
+                            ?? "Runtime failed to inject compiled dylib."
+                    )
+                }
+
+                results.append(
+                    InjectionResult(
+                        file: source,
+                        compiled: true,
+                        injected: runtimeResult.injected,
+                        message: detail
+                    )
+                )
+            }
         }
 
         return BackendInjectionResponse(
             results: results,
-            error: ControlError(
-                code: "COMPILER_BACKEND_NOT_READY",
-                message: "Runtime transport is available, but source recompilation is not wired yet."
-            )
+            error: firstError
         )
     }
 
@@ -772,3 +864,4 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             .path
     }
 }
+
