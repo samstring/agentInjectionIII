@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import AgentInjectionCore
 
-private struct DaemonOptions {
+struct DaemonOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"
     var projectRoot: String?
     var runtimePort: UInt16 = 8887
