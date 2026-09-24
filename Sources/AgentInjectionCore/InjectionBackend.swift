@@ -33,6 +33,9 @@ public protocol InjectionBackend: AnyObject {
     func clearEvents() -> InjectionEventsResult
     func profileSnapshot(limit: Int?) -> Result<ProfileResult, ControlError>
     func compilerState() -> CompilerStateResult
+    func setCompilerInterception(
+        enabled: Bool
+    ) -> Result<CompilerStateResult, ControlError>
     func setRuntimeEnvironment(
         _ values: [String: String?],
         target: String?
@@ -281,6 +284,17 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             intercepted: false,
             commandSource: "none",
             note: "Scaffold backend has no compiler."
+        )
+    }
+
+    public func setCompilerInterception(
+        enabled: Bool
+    ) -> Result<CompilerStateResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "COMPILER_NOT_READY",
+                message: "Scaffold backend has no compiler interception support."
+            )
         )
     }
 
