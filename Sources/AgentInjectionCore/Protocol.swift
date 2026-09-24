@@ -27,6 +27,7 @@ public enum ControlAction: String, Codable, Sendable {
     case setRuntimeEnv = "set_runtime_env"
     case traceScope = "trace_scope"
     case compilerState = "compiler_state"
+    case compilerInterception = "compiler_interception"
     case callOrder = "call_order"
     case instancesStart = "instances_start"
     case instancesRead = "instances_read"
@@ -46,6 +47,7 @@ public struct ControlRequest: Codable, Sendable {
     public let environment: [String: String?]?
     public let scope: String?
     public let name: String?
+    public let enabled: Bool?
 
     public init(
         id: String = UUID().uuidString,
@@ -59,7 +61,8 @@ public struct ControlRequest: Codable, Sendable {
         since: Double? = nil,
         environment: [String: String?]? = nil,
         scope: String? = nil,
-        name: String? = nil
+        name: String? = nil,
+        enabled: Bool? = nil
     ) {
         self.id = id
         self.action = action
@@ -73,6 +76,7 @@ public struct ControlRequest: Codable, Sendable {
         self.environment = environment
         self.scope = scope
         self.name = name
+        self.enabled = enabled
     }
 }
 
