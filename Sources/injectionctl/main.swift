@@ -66,6 +66,7 @@ private func printUsage() {
       injectionctl [--socket PATH] last-error
       injectionctl [--socket PATH] events [LIMIT]
       injectionctl [--socket PATH] events clear
+      injectionctl [--socket PATH] profile [LIMIT]
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace read [LIMIT]
       injectionctl [--socket PATH] trace stop
@@ -330,6 +331,25 @@ case "events":
             limit: limit
         )
     }
+
+case "profile":
+    guard options.arguments.count <= 2 else {
+        fatalUsage("profile accepts at most one LIMIT.")
+    }
+
+    var limit: Int?
+    if options.arguments.count == 2 {
+        guard let parsed = Int(options.arguments[1]),
+              parsed > 0 else {
+            fatalUsage("profile limit must be a positive integer.")
+        }
+        limit = parsed
+    }
+
+    request = ControlRequest(
+        action: .profileSnapshot,
+        limit: limit
+    )
 
 case "trace":
     guard options.arguments.count >= 2 else {
