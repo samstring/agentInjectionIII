@@ -1507,6 +1507,10 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                         compiler.remove(artifact)
                         if firstError == nil {
                             firstError = error
+                            record(
+                                error: error,
+                                source: source
+                            )
                         }
                         results.append(
                             InjectionResult(
