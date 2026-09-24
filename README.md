@@ -55,6 +55,7 @@ There is no file watcher in the control path.
 - local Simulator runtime connection on TCP port `8887`
 - explicit `load-dylib` command
 - explicit `inject FILE...` command
+- structured `doctor [SOURCE]` diagnostics for Agent preflight
 - Xcode `.xcactivitylog` lookup
 - Swift single-file recompilation
 - Objective-C / Objective-C++ single-file recompilation
@@ -153,9 +154,12 @@ For modern Xcode Swift recompilation, also use:
 
 ```text
 EMIT_FRONTEND_COMMAND_LINES = YES
+COMPILATION_CACHE_ENABLE_CACHING = NO
 ```
 
-If your team already uses InjectionIII successfully, these settings may already exist.
+The build-log path needs frontend commands to remain visible and does not support Xcode's compilation-cache `llvmcas://` command form.
+
+If your team already uses InjectionIII successfully, some of these settings may already exist.
 
 ## Run
 
@@ -181,6 +185,21 @@ swift run injectionctl status
 ```
 
 When the runtime is connected, `backend.appConnected` should be true.
+
+Before asking the Agent to inject, run the environment doctor:
+
+```bash
+swift run injectionctl doctor
+```
+
+To verify a particular source can be recovered from Xcode build logs without actually injecting it:
+
+```bash
+swift run injectionctl doctor \
+  /absolute/path/Sources/FeedViewController.swift
+```
+
+The response contains structured `pass` / `warning` / `fail` checks for Xcode selection, project root, build logs, runtime connection/handshake, local runtime bundle, source existence, and compile-command discovery.
 
 ## Inject source explicitly
 
@@ -318,7 +337,8 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 
 - Simulator first; real-device code signing is not implemented yet.
 - Build-log lookup requires a successful/recent Xcode build.
-- Swift works best with `EMIT_FRONTEND_COMMAND_LINES=YES`.
+- Swift build-log injection requires `EMIT_FRONTEND_COMMAND_LINES=YES` on modern Xcode.
+- The current path expects `COMPILATION_CACHE_ENABLE_CACHING=NO`.
 - Whole-module compilation is not a good fit for single-file injection.
 - Bazel is not connected yet.
 - compiler command persistence is currently in-memory.
@@ -346,6 +366,7 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - [x] ObjC / ObjC++ source recompile path
 - [x] dylib link path
 - [x] `inject FILE...` -> runtime load
+- [x] structured `doctor [SOURCE]` preflight diagnostics
 - [ ] validate end-to-end against a real CocoaPods app
 - [ ] persistent compiler-command cache
 - [ ] improve Xcode log parser edge cases
