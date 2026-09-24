@@ -251,6 +251,10 @@ public final class BuildLogCompiler {
                 )
             }
 
+            let diagnostics = parseCompilerDiagnostics(
+                compileResult.combinedOutput
+            )
+
             return .failure(
                 ControlError(
                     code: "COMPILE_FAILED",
@@ -262,7 +266,10 @@ public final class BuildLogCompiler {
 
                     Output:
                     \(compileResult.combinedOutput)
-                    """
+                    """,
+                    diagnostics: diagnostics.isEmpty
+                        ? nil
+                        : diagnostics
                 )
             )
         }
@@ -937,6 +944,70 @@ public final class BuildLogCompiler {
             ),
             withTemplate: replacement
         )
+    }
+
+    private func parseCompilerDiagnostics(
+        _ output: String
+    ) -> [CompilerDiagnostic] {
+        var diagnostics: [CompilerDiagnostic] = []
+        var seen = Set<String>()
+
+        let locatedPattern =
+            #"^(.+?):(\d+):(\d+):\s*(error|warning|note):\s*(.*)$"#
+        let genericPattern =
+            #"^\s*(error|warning|note):\s*(.*)$"#
+
+        for rawLine in output.split(
+            separator: "\n",
+            omittingEmptySubsequences: true
+        ) {
+            let line = String(rawLine)
+
+            if let captures = firstRegexCaptures(
+                locatedPattern,
+                in: line
+            ),
+            captures.count == 5 {
+                let diagnostic = CompilerDiagnostic(
+                    file: captures[0],
+                    line: Int(captures[1]),
+                    column: Int(captures[2]),
+                    severity: captures[3],
+                    message: captures[4]
+                )
+
+                let key = [
+                    diagnostic.file ?? "",
+                    String(diagnostic.line ?? 0),
+                    String(diagnostic.column ?? 0),
+                    diagnostic.severity,
+                    diagnostic.message
+                ].joined(separator: "|")
+
+                if seen.insert(key).inserted {
+                    diagnostics.append(diagnostic)
+                }
+                continue
+            }
+
+            if let captures = firstRegexCaptures(
+                genericPattern,
+                in: line
+            ),
+            captures.count == 2 {
+                let diagnostic = CompilerDiagnostic(
+                    severity: captures[0],
+                    message: captures[1]
+                )
+                let key =
+                    "|0|0|\(diagnostic.severity)|\(diagnostic.message)"
+                if seen.insert(key).inserted {
+                    diagnostics.append(diagnostic)
+                }
+            }
+        }
+
+        return diagnostics
     }
 
     private func firstRegexCaptures(
