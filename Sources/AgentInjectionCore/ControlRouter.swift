@@ -104,6 +104,42 @@ public final class ControlRouter {
                     message: error.message
                 )
             }
+
+        case .traceStart:
+            switch backend.traceStart(filter: request.filter) {
+            case .success(let result):
+                return .trace(id: request.id, result: result)
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .traceStop:
+            switch backend.traceStop() {
+            case .success(let result):
+                return .trace(id: request.id, result: result)
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .traceRead:
+            switch backend.traceRead(limit: request.limit) {
+            case .success(let result):
+                return .trace(id: request.id, result: result)
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
         }
     }
 }
