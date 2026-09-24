@@ -40,6 +40,41 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.injections?.first?.injected, false)
     }
 
+    func testLoadDylibRoutesToBackend() throws {
+        let backend = ScaffoldInjectionBackend(projectRoot: "/repo")
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(
+            action: .loadDylib,
+            path: "Build/test.dylib"
+        )
+        let response = try route(request, through: router)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error?.code, "RUNTIME_NOT_READY")
+        XCTAssertEqual(
+            response.injections?.first?.file,
+            "/repo/Build/test.dylib"
+        )
+    }
+
+    func testLoadDylibRequiresPath() throws {
+        let backend = ScaffoldInjectionBackend()
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(action: .loadDylib)
+        let response = try route(request, through: router)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error?.code, "MISSING_PATH")
+    }
+
     func testInjectRequiresFiles() throws {
         let backend = ScaffoldInjectionBackend()
         let router = ControlRouter(
