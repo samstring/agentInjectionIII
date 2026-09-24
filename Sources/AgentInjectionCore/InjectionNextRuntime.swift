@@ -717,6 +717,33 @@ private final class InjectionRuntimeClient {
         return (mimeType, data)
     }
 
+    func setEnvironment(
+        _ values: [String: String?]
+    ) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
+        for name in values.keys.sorted() {
+            try InjectionNextWire.writeInt(
+                InjectionNextCommand.setenv.rawValue,
+                to: fd
+            )
+            try InjectionNextWire.writeString(
+                name,
+                to: fd
+            )
+            try InjectionNextWire.writeString(
+                values[name] ?? "__NULL__",
+                to: fd
+            )
+        }
+
+        try InjectionNextWire.writeInt(
+            InjectionNextCommand.endenv.rawValue,
+            to: fd
+        )
+    }
+
     private func sendRemoteInjection(
         name: String,
         data: Data
@@ -1131,6 +1158,59 @@ public final class InjectionNextRuntimeServer {
         )
     }
 
+    public func setEnvironment(
+        _ values: [String: String?],
+        target id: String? = nil
+    ) -> Result<OperationResult, ControlError> {
+        let selected: [InjectionRuntimeClient]
+
+        stateLock.lock()
+        if let id {
+            if let client = clients[id] {
+                selected = [client]
+            } else {
+                selected = []
+            }
+        } else {
+            selected = clientOrder.compactMap {
+                clients[$0]
+            }
+        }
+        stateLock.unlock()
+
+        guard !selected.isEmpty else {
+            return .failure(
+                ControlError(
+                    code: "TARGET_NOT_FOUND",
+                    message: id == nil
+                        ? "No connected runtime target."
+                        : "Target not found: \(id!)"
+                )
+            )
+        }
+
+        do {
+            for client in selected {
+                try client.setEnvironment(values)
+            }
+
+            return .success(
+                OperationResult(
+                    message: "Updated \(values.count) Injection runtime setting(s) on \(selected.count) target(s)."
+                )
+            )
+        } catch let error as ControlError {
+            return .failure(error)
+        } catch {
+            return .failure(
+                ControlError(
+                    code: "RUNTIME_ENV_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+    }
+
     public func logs(
         since: Double?,
         limit: Int?
@@ -1372,7 +1452,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "xcode-selection",
                 "last-error",
                 "lifecycle-events",
-                "device-testing"
+                "device-testing",
+                "runtime-env"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -1975,6 +2056,29 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public func clearEvents()
         -> InjectionEventsResult {
         eventStore.clear()
+    }
+
+    public func setRuntimeEnvironment(
+        _ values: [String: String?],
+        target: String?
+    ) -> Result<OperationResult, ControlError> {
+        let invalid = values.keys.filter {
+            !$0.hasPrefix("INJECTION_")
+        }
+
+        guard invalid.isEmpty else {
+            return .failure(
+                ControlError(
+                    code: "RUNTIME_ENV_NOT_ALLOWED",
+                    message: "Only INJECTION_* runtime settings are allowed: \(invalid.joined(separator: ", "))"
+                )
+            )
+        }
+
+        return runtimeServer.setEnvironment(
+            values,
+            target: target
+        )
     }
 
     public func profileSnapshot(
