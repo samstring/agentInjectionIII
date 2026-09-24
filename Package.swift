@@ -25,9 +25,21 @@ let package = Package(
             targets: ["injectionctl"]
         )
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/johnno1962/InjectionLite",
+            revision: "63db51348e9d91f0faeaab54206e390175b6f327"
+        )
+    ],
     targets: [
         .target(
-            name: "AgentInjectionCore"
+            name: "AgentInjectionCore",
+            dependencies: [
+                .product(
+                    name: "InjectionImpl",
+                    package: "InjectionLite"
+                )
+            ]
         ),
         .target(
             name: "AgentInjectionIntegration",
