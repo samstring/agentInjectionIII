@@ -24,6 +24,11 @@ public protocol InjectionBackend: AnyObject {
     func logs(since: Double?, limit: Int?) -> LogsResult
     func clearLogs() -> LogsResult
     func unhideSymbols() -> Result<OperationResult, ControlError>
+    func prepareSwiftUISource(path: String) -> Result<OperationResult, ControlError>
+    func prepareSwiftUIProject() -> Result<OperationResult, ControlError>
+    func setXcodePath(path: String) -> Result<OperationResult, ControlError>
+    func launchXcode() -> Result<OperationResult, ControlError>
+    func lastError() -> LastErrorResult
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
@@ -181,6 +186,52 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                 message: "Scaffold backend cannot unhide symbols."
             )
         )
+    }
+
+    public func prepareSwiftUISource(
+        path: String
+    ) -> Result<OperationResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "SWIFTUI_PREPARE_NOT_READY",
+                message: "Scaffold backend cannot prepare SwiftUI sources."
+            )
+        )
+    }
+
+    public func prepareSwiftUIProject()
+        -> Result<OperationResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "SWIFTUI_PREPARE_NOT_READY",
+                message: "Scaffold backend cannot prepare a SwiftUI project."
+            )
+        )
+    }
+
+    public func setXcodePath(
+        path: String
+    ) -> Result<OperationResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "XCODE_NOT_READY",
+                message: "Scaffold backend cannot configure Xcode."
+            )
+        )
+    }
+
+    public func launchXcode()
+        -> Result<OperationResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "XCODE_NOT_READY",
+                message: "Scaffold backend cannot launch Xcode."
+            )
+        )
+    }
+
+    public func lastError() -> LastErrorResult {
+        LastErrorResult()
     }
 
     public func traceStart(
