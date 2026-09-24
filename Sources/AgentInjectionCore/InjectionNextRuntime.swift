@@ -305,11 +305,10 @@ private final class InjectionRuntimeClient {
                 case .tmpPath:
                     let path = try InjectionNextWire.readString(from: fd)
                     updateState {
-                        temporaryPathValue = path
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                            .isEmpty ? "/" : path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == path
-                                ? path
-                                : String(path.dropLast())
+                        temporaryPathValue =
+                            path.count > 1 && path.hasSuffix("/")
+                            ? String(path.dropLast())
+                            : path
                     }
 
                 case .injected:
@@ -552,7 +551,8 @@ public final class InjectionNextRuntimeServer {
 
     private let queue = DispatchQueue(
         label: "agentInjectionIII.runtime-server",
-        qos: .userInitiated
+        qos: .userInitiated,
+        attributes: .concurrent
     )
     private let stateLock = NSLock()
 
