@@ -340,6 +340,12 @@ public final class ControlRouter {
                 )
             }
 
+        case .compilerState:
+            return .compilerState(
+                id: request.id,
+                result: backend.compilerState()
+            )
+
         case .profileSnapshot:
             switch backend.profileSnapshot(
                 limit: request.limit
