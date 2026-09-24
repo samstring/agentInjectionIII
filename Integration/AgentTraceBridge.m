@@ -341,6 +341,29 @@ static BOOL AgentTraceOutputInstalled = NO;
             return NO;
         }
 
+        Protocol *observationProtocol =
+            NSProtocolFromString(@"XCTestObservation");
+        if (!observationProtocol) {
+            return NO;
+        }
+
+        Class observerClass =
+            AgentInjectedTestObserver.class;
+        if (!class_conformsToProtocol(
+                observerClass,
+                observationProtocol
+            )) {
+            if (!class_addProtocol(
+                    observerClass,
+                    observationProtocol
+                )) {
+                NSLog(
+                    @"[agentInjectionIII] Unable to add XCTestObservation conformance."
+                );
+                return NO;
+            }
+        }
+
         AgentXCTestObserver =
             [AgentInjectedTestObserver new];
 
