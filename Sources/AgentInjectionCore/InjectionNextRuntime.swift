@@ -1453,7 +1453,9 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "last-error",
                 "lifecycle-events",
                 "device-testing",
-                "runtime-env"
+                "runtime-env",
+                "call-order",
+                "instance-counts"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -2169,6 +2171,26 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             name: name,
             filter: filter
         )
+    }
+
+    public func callOrder()
+        -> Result<CallOrderResult, ControlError> {
+        traceServer.callOrderSnapshot()
+    }
+
+    public func instancesStart()
+        -> Result<InstanceCountsResult, ControlError> {
+        traceServer.instancesStart()
+    }
+
+    public func instancesRead()
+        -> Result<InstanceCountsResult, ControlError> {
+        traceServer.instancesRead()
+    }
+
+    public func instancesStop()
+        -> Result<InstanceCountsResult, ControlError> {
+        traceServer.instancesStop()
     }
 
     public func traceStop()
