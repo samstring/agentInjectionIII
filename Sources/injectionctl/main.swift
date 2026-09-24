@@ -58,6 +58,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] touch replay EVENTS.json
       injectionctl [--socket PATH] logs [LIMIT]
       injectionctl [--socket PATH] compiler-state
+      injectionctl [--socket PATH] compiler-intercept on|off|state
       injectionctl [--socket PATH] logs clear
       injectionctl [--socket PATH] unhide-symbols
       injectionctl [--socket PATH] prepare-swiftui-source FILE.swift
@@ -372,6 +373,30 @@ case "compiler-state":
     request = ControlRequest(
         action: .compilerState
     )
+
+case "compiler-intercept":
+    guard options.arguments.count == 2 else {
+        fatalUsage("compiler-intercept requires on, off, or state.")
+    }
+
+    switch options.arguments[1] {
+    case "on":
+        request = ControlRequest(
+            action: .compilerInterception,
+            enabled: true
+        )
+    case "off":
+        request = ControlRequest(
+            action: .compilerInterception,
+            enabled: false
+        )
+    case "state":
+        request = ControlRequest(
+            action: .compilerState
+        )
+    default:
+        fatalUsage("compiler-intercept requires on, off, or state.")
+    }
 
 case "profile":
     guard options.arguments.count <= 2 else {
