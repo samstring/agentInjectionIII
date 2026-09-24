@@ -196,6 +196,21 @@ public final class ControlRouter {
                 result: backend.clearLogs()
             )
 
+        case .unhideSymbols:
+            switch backend.unhideSymbols() {
+            case .success(let result):
+                return .operation(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .traceStart:
             switch backend.traceStart(filter: request.filter) {
             case .success(let result):
