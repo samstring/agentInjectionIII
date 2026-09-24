@@ -58,6 +58,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] touch replay EVENTS.json
       injectionctl [--socket PATH] logs [LIMIT]
       injectionctl [--socket PATH] logs clear
+      injectionctl [--socket PATH] unhide-symbols
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace read [LIMIT]
       injectionctl [--socket PATH] trace stop
@@ -242,6 +243,14 @@ case "logs":
             limit: limit
         )
     }
+
+case "unhide-symbols":
+    guard options.arguments.count == 1 else {
+        fatalUsage("unhide-symbols does not accept arguments.")
+    }
+    request = ControlRequest(
+        action: .unhideSymbols
+    )
 
 case "trace":
     guard options.arguments.count >= 2 else {
