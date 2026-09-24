@@ -103,6 +103,23 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.error?.code, "MISSING_PATH")
     }
 
+    func testDoctorReturnsStructuredFailureForScaffoldBackend() throws {
+        let backend = ScaffoldInjectionBackend()
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(action: .doctor)
+        let response = try route(request, through: router)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error?.code, "DOCTOR_NOT_READY")
+        XCTAssertEqual(response.doctor?.ready, false)
+        XCTAssertEqual(response.doctor?.checks.first?.name, "backend")
+        XCTAssertEqual(response.doctor?.checks.first?.state, .fail)
+    }
+
     func testBuildLogCompilerKeepsOnlyRequestedPrimary() throws {
         let compiler = BuildLogCompiler(projectRoot: "/repo")
         let source = "/repo/Sources/Foo.swift"
