@@ -16,11 +16,15 @@ STATUS_JSON="$ARTIFACTS/status.json"
 INJECT_JSON="$ARTIFACTS/inject.json"
 SCREENSHOT_JSON="$ARTIFACTS/screenshot.json"
 SCREENSHOT_PNG="$ARTIFACTS/after.png"
+TOUCH_CAPTURE_JSON="$ARTIFACTS/touch-capture.json"
+TOUCH_EVENTS_JSON="$ARTIFACTS/touch-events.json"
+TOUCH_REPLAY_JSON="$ARTIFACTS/touch-replay.json"
 
 mkdir -p "$ARTIFACTS"
 rm -rf "$DERIVED"
 rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" \
-  "$STATUS_JSON" "$INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG"
+  "$STATUS_JSON" "$INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
+  "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON"
 
 DAEMON_PID=""
 UDID="${SMOKE_UDID:-}"
@@ -288,6 +292,7 @@ if [ ! -S "$SOCKET" ]; then
 fi
 
 echo "==> Install and launch mixed ObjC/Swift/CocoaPods app"
+xcrun simctl uninstall "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$UDID" "$APP"
 xcrun simctl launch "$UDID" "$BUNDLE_ID"
 
@@ -313,6 +318,8 @@ DATA_CONTAINER="$(
   xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data
 )"
 MARKER="$DATA_CONTAINER/Documents/agentInjection-smoke.txt"
+TOUCH_TARGET="$DATA_CONTAINER/Documents/agentInjection-touch-target.json"
+TOUCH_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch.txt"
 
 echo "==> Verify initial Swift behavior: BEFORE"
 wait_for_marker "BEFORE" "$MARKER"
@@ -362,6 +369,109 @@ if not ok:
 raise SystemExit(0 if ok else 1)
 PY
 
+echo "==> Enable InjectionNext touch capture"
+"$CTL" --socket "$SOCKET" touch capture |
+  tee "$TOUCH_CAPTURE_JSON"
+
+python3 - "$TOUCH_CAPTURE_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+ok = bool(
+    data.get("ok")
+    and data.get("touch", {}).get("target")
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
+echo "==> Wait for smoke app touch target coordinates"
+for _ in $(seq 1 80); do
+  if [ -s "$TOUCH_TARGET" ] &&
+     python3 - "$TOUCH_TARGET" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    ok = float(data["x"]) > 0 and float(data["y"]) > 0
+except Exception:
+    ok = False
+raise SystemExit(0 if ok else 1)
+PY
+  then
+    break
+  fi
+  sleep 0.25
+done
+
+if [ ! -s "$TOUCH_TARGET" ]; then
+  echo "Touch target coordinates were not produced by the app." >&2
+  exit 1
+fi
+
+rm -f "$TOUCH_MARKER"
+
+echo "==> Build and replay a real UIKit touch sequence"
+python3 - "$TOUCH_TARGET" "$TOUCH_EVENTS_JSON" <<'PY'
+import json, sys
+
+target = json.load(open(sys.argv[1]))
+x = float(target["x"])
+y = float(target["y"])
+
+def event(time, phase):
+    return {
+        "time": time,
+        "phase": phase,
+        "touches": [
+            {
+                "id": 1,
+                "x": x,
+                "y": y,
+                "phase": phase,
+                "tapCount": 1,
+            }
+        ],
+    }
+
+payload = {
+    "events": [
+        event(1.0, "began"),
+        event(1.08, "ended"),
+    ]
+}
+with open(sys.argv[2], "w") as f:
+    json.dump(payload, f)
+PY
+
+"$CTL" --socket "$SOCKET" touch replay "$TOUCH_EVENTS_JSON" |
+  tee "$TOUCH_REPLAY_JSON"
+
+python3 - "$TOUCH_REPLAY_JSON" <<'PY'
+import json, sys
+
+text = open(sys.argv[1]).read()
+start = text.find("{")
+if start < 0:
+    raise SystemExit(1)
+data, _ = json.JSONDecoder().raw_decode(text[start:])
+ok = bool(
+    data.get("ok")
+    and data.get("touch", {}).get("target")
+    and data.get("touch", {}).get("replayed") == 2
+)
+if not ok:
+    print(json.dumps(data, indent=2), file=sys.stderr)
+raise SystemExit(0 if ok else 1)
+PY
+
+echo "==> Verify replayed touch reached the live UIButton"
+wait_for_marker "TOUCHED" "$TOUCH_MARKER"
+
 echo
 echo "Simulator smoke test passed:"
 echo "  mixed ObjC + Swift: yes"
@@ -369,3 +479,5 @@ echo "  CocoaPods (Masonry): yes"
 echo "  runtime handshake: yes"
 echo "  Swift injection BEFORE -> AFTER: yes"
 echo "  screenshot: $SCREENSHOT_PNG"
+echo "  touch capture command: yes"
+echo "  touch replay -> UIButton action: yes"
