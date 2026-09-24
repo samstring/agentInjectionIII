@@ -369,6 +369,34 @@ public final class ControlRouter {
                 )
             }
 
+        case .traceScope:
+            guard let scope = request.scope,
+                  !scope.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_SCOPE",
+                    message: "trace_scope requires a scope."
+                )
+            }
+
+            switch backend.traceScope(
+                scope: scope,
+                name: request.name,
+                filter: request.filter
+            ) {
+            case .success(let result):
+                return .trace(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .traceStop:
             switch backend.traceStop() {
             case .success(let result):
