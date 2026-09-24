@@ -2095,6 +2095,36 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         traceServer.startTrace(filter: filter)
     }
 
+    public func traceScope(
+        scope: String,
+        name: String?,
+        filter: String?
+    ) -> Result<TraceResult, ControlError> {
+        let allowed = Set([
+            "frameworks",
+            "uikit",
+            "swiftui",
+            "framework",
+            "package",
+            "main-all"
+        ])
+
+        guard allowed.contains(scope) else {
+            return .failure(
+                ControlError(
+                    code: "TRACE_SCOPE_INVALID",
+                    message: "Unsupported trace scope: \(scope)"
+                )
+            )
+        }
+
+        return traceServer.startTraceScope(
+            scope: scope,
+            name: name,
+            filter: filter
+        )
+    }
+
     public func traceStop()
         -> Result<TraceResult, ControlError> {
         traceServer.stopTrace()
