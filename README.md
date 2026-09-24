@@ -259,7 +259,9 @@ Success:
       "file": "/repo/Sources/Foo.swift",
       "compiled": true,
       "injected": true,
-      "message": "compile 312ms, link 41ms; Runtime loaded and patched dylib."
+      "compileMilliseconds": 312,
+      "linkMilliseconds": 41,
+      "message": "Runtime loaded and patched dylib."
     }
   ]
 }
@@ -341,7 +343,8 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - The current path expects `COMPILATION_CACHE_ENABLE_CACHING=NO`.
 - Whole-module compilation is not a good fit for single-file injection.
 - Bazel is not connected yet.
-- compiler command persistence is currently in-memory.
+- compiler commands are cached under `~/.agentInjectionIII/cache/compile-commands.json`; stale cached commands are invalidated and retried from recent build logs.
+- missing Swift `-filelist` and stale bridging-header PCH paths have first-pass recovery, but still need validation against real-world Xcode/CocoaPods variants.
 - trace / screenshot / touch APIs are not yet exposed through `injectionctl`.
 - CI is configured, but GitHub-hosted macOS jobs on this private repository are currently failing before any workflow steps are reported, so CI has not yet verified the current Swift build.
 
@@ -368,8 +371,11 @@ This is the same general strategy used by InjectionLite/InjectionNext.
 - [x] `inject FILE...` -> runtime load
 - [x] structured `doctor [SOURCE]` preflight diagnostics
 - [ ] validate end-to-end against a real CocoaPods app
-- [ ] persistent compiler-command cache
-- [ ] improve Xcode log parser edge cases
+- [x] persistent compiler-command cache
+- [x] first-pass missing `-filelist` recovery
+- [x] first-pass stale bridging-header PCH recovery
+- [x] structured compiler diagnostics and compile/link timings
+- [ ] validate parser edge cases against the target CocoaPods project
 
 ### Phase 3 — agent observability
 
