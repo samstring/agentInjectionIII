@@ -329,8 +329,10 @@ private final class InjectionRuntimeClient {
             connectedValue = false
             let pending = pendingInjection
             let screenshot = pendingScreenshot
+            let replay = pendingTouchReplay
             pendingInjection = nil
             pendingScreenshot = nil
+            pendingTouchReplay = nil
             stateLock.unlock()
 
             if let pending {
@@ -339,7 +341,12 @@ private final class InjectionRuntimeClient {
                 pending.semaphore.signal()
             }
             screenshot?.semaphore.signal()
+            replay?.semaphore.signal()
 
+            logStore.append(
+                "Runtime disconnected: \(id) \(peerAddress)",
+                level: "warning"
+            )
             onDisconnect()
         }
 
@@ -389,13 +396,42 @@ private final class InjectionRuntimeClient {
                         message: "Runtime could not load dylib; symbols may need unhiding."
                     )
 
-                case .projectRoot,
-                     .detail,
-                     .bazelTarget,
-                     .executable,
-                     .touchEvent,
-                     .replayComplete:
-                    _ = try InjectionNextWire.readString(from: fd)
+                case .projectRoot:
+                    let value = try InjectionNextWire.readString(from: fd)
+                    logStore.append(
+                        "Runtime project root: \(value)"
+                    )
+
+                case .detail:
+                    let value = try InjectionNextWire.readString(from: fd)
+                    logStore.append(value, level: "detail")
+
+                case .bazelTarget:
+                    let value = try InjectionNextWire.readString(from: fd)
+                    logStore.append(
+                        "Runtime Bazel target: \(value)"
+                    )
+
+                case .executable:
+                    let value = try InjectionNextWire.readString(from: fd)
+                    logStore.append(
+                        "Runtime executable: \(value)"
+                    )
+
+                case .touchEvent:
+                    let json = try InjectionNextWire.readString(from: fd)
+                    stateLock.lock()
+                    touchEvents.append(json)
+                    if touchEvents.count > 10_000 {
+                        touchEvents.removeFirst(
+                            touchEvents.count - 10_000
+                        )
+                    }
+                    stateLock.unlock()
+
+                case .replayComplete:
+                    let payload = try InjectionNextWire.readString(from: fd)
+                    completeTouchReplay(payload)
 
                 case .screenshotData:
                     let mimeType = try InjectionNextWire.readString(from: fd)
@@ -419,10 +455,13 @@ private final class InjectionRuntimeClient {
         defer { stateLock.unlock() }
 
         return InjectionRuntimeStatus(
+            id: id,
             connected: connectedValue,
             platform: platformValue,
             arch: archValue,
-            temporaryPath: temporaryPathValue
+            temporaryPath: temporaryPathValue,
+            peerAddress: peerAddress,
+            isLocal: isLocal
         )
     }
 
