@@ -18,6 +18,7 @@ typedef void (^AgentSwiftTraceOutput)(
 static int AgentTraceSocket = -1;
 static dispatch_queue_t AgentTraceWriteQueue;
 static dispatch_once_t AgentTraceStartOnce;
+static BOOL AgentTraceOutputInstalled = NO;
 
 + (void)start {
 #if DEBUG
@@ -145,6 +146,7 @@ static dispatch_once_t AgentTraceStartOnce;
     if (!traceClass ||
         ![traceClass respondsToSelector:setter]) {
         NSLog(@"[agentInjectionIII] SwiftTrace.logOutput is unavailable.");
+        AgentTraceOutputInstalled = NO;
         return;
     }
 
@@ -169,6 +171,7 @@ static dispatch_once_t AgentTraceStartOnce;
         setter,
         [output copy]
     );
+    AgentTraceOutputInstalled = YES;
 }
 
 + (void)readCommandLoop:(int)socketFD {
@@ -242,20 +245,59 @@ static dispatch_once_t AgentTraceStartOnce;
             : nil;
 
         dispatch_async(dispatch_get_main_queue(), ^{
+            SEL startSelector =
+                NSSelectorFromString(@"swiftTraceMainBundle");
+
+            if (!AgentTraceOutputInstalled) {
+                [self sendTraceState:@"error"
+                               error:@"SwiftTrace.logOutput is unavailable."];
+                return;
+            }
+
+            if (![NSObject respondsToSelector:startSelector]) {
+                [self sendTraceState:@"error"
+                               error:@"swiftTraceMainBundle selector is unavailable."];
+                return;
+            }
+
             [self setTraceFilter:filter];
-            [self invokeNSObjectClassSelector:
-                NSSelectorFromString(@"swiftTraceMainBundle")];
+            [self invokeNSObjectClassSelector:startSelector];
+            [self sendTraceState:@"started" error:nil];
         });
         return;
     }
 
     if ([action isEqualToString:@"trace_stop"]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self invokeNSObjectClassSelector:
-                NSSelectorFromString(@"swiftTraceRemoveAllTraces")];
+            SEL stopSelector =
+                NSSelectorFromString(@"swiftTraceRemoveAllTraces");
+
+            if (![NSObject respondsToSelector:stopSelector]) {
+                [self sendTraceState:@"error"
+                               error:@"swiftTraceRemoveAllTraces selector is unavailable."];
+                return;
+            }
+
+            [self invokeNSObjectClassSelector:stopSelector];
             [self setTraceFilter:nil];
+            [self sendTraceState:@"stopped" error:nil];
         });
     }
+}
+
++ (void)sendTraceState:(NSString *)state
+                 error:(NSString * _Nullable)error {
+    NSMutableDictionary *message = [@{
+        @"type": @"state",
+        @"state": state,
+        @"timestamp": @([NSDate timeIntervalSinceReferenceDate])
+    } mutableCopy];
+
+    if (error.length > 0) {
+        message[@"error"] = error;
+    }
+
+    [self sendJSONObject:message];
 }
 
 + (void)setTraceFilter:(NSString * _Nullable)filter {
