@@ -898,17 +898,7 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 )
                 compiler.remove(artifact)
 
-                let timing = String(
-                    format: "compile %.0fms, link %.0fms",
-                    artifact.compileMilliseconds,
-                    artifact.linkMilliseconds
-                )
-                let detail = [
-                    timing,
-                    runtimeResult.message
-                ]
-                .compactMap { $0 }
-                .joined(separator: "; ")
+                let detail = runtimeResult.message
 
                 if !runtimeResult.injected, firstError == nil {
                     firstError = ControlError(
@@ -923,6 +913,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                         file: source,
                         compiled: true,
                         injected: runtimeResult.injected,
+                        compileMilliseconds: artifact.compileMilliseconds,
+                        linkMilliseconds: artifact.linkMilliseconds,
                         message: detail
                     )
                 )
