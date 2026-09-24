@@ -374,7 +374,7 @@ public final class BuildLogCompiler {
         return candidate.contains(executable) ? index : nil
     }
 
-    private func makeSingleFileCommand(
+    func makeSingleFileCommand(
         original: String,
         source: String,
         object: String
