@@ -2210,12 +2210,25 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
     public func doctor(path: String?) -> DoctorReport {
         let runtime = runtimeServer.status()
+        let normalizedSource =
+            path.map { normalize(path: $0) }
         let compilerDiagnostics = compiler.diagnostics(
-            source: path.map { normalize(path: $0) },
+            source: normalizedSource,
             platform: runtime.platform
+        )
+        let buildSystem = compiler.buildSystem(
+            for: normalizedSource
         )
 
         var checks = [DoctorCheck]()
+
+        checks.append(
+            DoctorCheck(
+                name: "build_system",
+                state: .pass,
+                message: "Compiler provider: \(buildSystem)."
+            )
+        )
 
         let xcode = compiler.xcodePath()
         checks.append(
@@ -2254,17 +2267,27 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             )
         }
 
-        checks.append(
-            DoctorCheck(
-                name: "build_logs",
-                state: compilerDiagnostics.buildLogCount > 0
-                    ? .pass
-                    : .fail,
-                message: compilerDiagnostics.buildLogCount > 0
-                    ? "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
-                    : "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
+        if buildSystem == "bazel" {
+            checks.append(
+                DoctorCheck(
+                    name: "build_logs",
+                    state: .pass,
+                    message: "Bazel aquery compiler provider is active; Xcode .xcactivitylog files are optional."
+                )
             )
-        )
+        } else {
+            checks.append(
+                DoctorCheck(
+                    name: "build_logs",
+                    state: compilerDiagnostics.buildLogCount > 0
+                        ? .pass
+                        : .fail,
+                    message: compilerDiagnostics.buildLogCount > 0
+                        ? "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
+                        : "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
+                )
+            )
+        }
 
         checks.append(
             DoctorCheck(
@@ -2341,8 +2364,10 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                             ? .pass
                             : .fail,
                         message: compilerDiagnostics.compileCommandFound == true
-                            ? "Found a matching Xcode compiler command for this source."
-                            : "No matching compiler command found. Build the target with EMIT_FRONTEND_COMMAND_LINES=YES and COMPILATION_CACHE_ENABLE_CACHING=NO."
+                            ? "Found a matching \(buildSystem) compiler command for this source."
+                            : (buildSystem == "bazel"
+                                ? "No matching Bazel compiler command found. Verify bazel/bazelisk and the app target, then retry."
+                                : "No matching compiler command found. Build the target with EMIT_FRONTEND_COMMAND_LINES=YES and COMPILATION_CACHE_ENABLE_CACHING=NO.")
                     )
                 )
             }
