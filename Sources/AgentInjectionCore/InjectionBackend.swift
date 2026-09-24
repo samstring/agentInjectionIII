@@ -32,6 +32,10 @@ public protocol InjectionBackend: AnyObject {
     func events(limit: Int?) -> InjectionEventsResult
     func clearEvents() -> InjectionEventsResult
     func profileSnapshot(limit: Int?) -> Result<ProfileResult, ControlError>
+    func setRuntimeEnvironment(
+        _ values: [String: String?],
+        target: String?
+    ) -> Result<OperationResult, ControlError>
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
@@ -255,6 +259,18 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             ControlError(
                 code: "PROFILE_NOT_READY",
                 message: "Scaffold backend has no profiling bridge."
+            )
+        )
+    }
+
+    public func setRuntimeEnvironment(
+        _ values: [String: String?],
+        target: String?
+    ) -> Result<OperationResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "RUNTIME_NOT_READY",
+                message: "Scaffold backend has no runtime environment channel."
             )
         )
     }
