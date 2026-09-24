@@ -74,6 +74,8 @@ private func printUsage() {
       injectionctl [--socket PATH] instances start
       injectionctl [--socket PATH] instances read
       injectionctl [--socket PATH] instances stop
+      injectionctl [--socket PATH] tests read [LIMIT]
+      injectionctl [--socket PATH] tests clear
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope frameworks [FILTER_REGEX]
       injectionctl [--socket PATH] trace scope uikit [FILTER_REGEX]
@@ -445,6 +447,44 @@ case "instances":
         )
     default:
         fatalUsage("Unknown instances command: \(options.arguments[1])")
+    }
+
+case "tests":
+    guard options.arguments.count >= 2 else {
+        fatalUsage("tests requires read or clear.")
+    }
+
+    switch options.arguments[1] {
+    case "read":
+        guard options.arguments.count <= 3 else {
+            fatalUsage("tests read accepts at most one LIMIT.")
+        }
+
+        var limit: Int?
+        if options.arguments.count == 3 {
+            guard let parsed = Int(
+                options.arguments[2]
+            ), parsed > 0 else {
+                fatalUsage("tests read limit must be a positive integer.")
+            }
+            limit = parsed
+        }
+
+        request = ControlRequest(
+            action: .testResults,
+            limit: limit
+        )
+
+    case "clear":
+        guard options.arguments.count == 2 else {
+            fatalUsage("tests clear does not accept arguments.")
+        }
+        request = ControlRequest(
+            action: .clearTestResults
+        )
+
+    default:
+        fatalUsage("tests requires read or clear.")
     }
 
 case "trace":
