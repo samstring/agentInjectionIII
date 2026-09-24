@@ -17,6 +17,9 @@ public protocol InjectionBackend: AnyObject {
     func loadDylib(path: String) -> BackendInjectionResponse
     func doctor(path: String?) -> DoctorReport
     func screenshot(path: String?) -> Result<ScreenshotResult, ControlError>
+    func traceStart(filter: String?) -> Result<TraceResult, ControlError>
+    func traceStop() -> Result<TraceResult, ControlError>
+    func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
 }
 
 /// Phase-1 backend.
@@ -103,6 +106,38 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             ControlError(
                 code: "RUNTIME_NOT_READY",
                 message: "Scaffold backend has no connected app runtime."
+            )
+        )
+    }
+
+    public func traceStart(
+        filter: String?
+    ) -> Result<TraceResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no trace bridge."
+            )
+        )
+    }
+
+    public func traceStop()
+        -> Result<TraceResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no trace bridge."
+            )
+        )
+    }
+
+    public func traceRead(
+        limit: Int?
+    ) -> Result<TraceResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no trace bridge."
             )
         )
     }
