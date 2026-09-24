@@ -228,6 +228,12 @@ private final class PendingRuntimeInjection {
     var message: String?
 }
 
+private final class PendingRuntimeScreenshot {
+    let semaphore = DispatchSemaphore(value: 0)
+    var mimeType: String?
+    var data: Data?
+}
+
 private final class InjectionRuntimeClient {
     private let fd: Int32
     private let writeLock = NSLock()
@@ -239,6 +245,7 @@ private final class InjectionRuntimeClient {
     private var temporaryPathValue: String?
     private var connectedValue = true
     private var pendingInjection: PendingRuntimeInjection?
+    private var pendingScreenshot: PendingRuntimeScreenshot?
 
     init(fd: Int32) {
         self.fd = fd
@@ -278,7 +285,9 @@ private final class InjectionRuntimeClient {
             stateLock.lock()
             connectedValue = false
             let pending = pendingInjection
+            let screenshot = pendingScreenshot
             pendingInjection = nil
+            pendingScreenshot = nil
             stateLock.unlock()
 
             if let pending {
@@ -286,6 +295,7 @@ private final class InjectionRuntimeClient {
                 pending.message = "Injection runtime disconnected."
                 pending.semaphore.signal()
             }
+            screenshot?.semaphore.signal()
 
             onDisconnect()
         }
@@ -345,8 +355,12 @@ private final class InjectionRuntimeClient {
                     _ = try InjectionNextWire.readString(from: fd)
 
                 case .screenshotData:
-                    _ = try InjectionNextWire.readString(from: fd)
-                    _ = try InjectionNextWire.readData(from: fd)
+                    let mimeType = try InjectionNextWire.readString(from: fd)
+                    let data = try InjectionNextWire.readData(from: fd)
+                    completeScreenshot(
+                        mimeType: mimeType,
+                        data: data
+                    )
 
                 case .exit:
                     return
@@ -471,6 +485,57 @@ private final class InjectionRuntimeClient {
         )
     }
 
+    func requestScreenshot(
+        timeout: TimeInterval = 10
+    ) -> (mimeType: String, data: Data)? {
+        operationLock.lock()
+        defer { operationLock.unlock() }
+
+        let pending = PendingRuntimeScreenshot()
+
+        stateLock.lock()
+        guard connectedValue, pendingScreenshot == nil else {
+            stateLock.unlock()
+            return nil
+        }
+        pendingScreenshot = pending
+        stateLock.unlock()
+
+        do {
+            try send(
+                command: .screenshot,
+                string: nil
+            )
+        } catch {
+            stateLock.lock()
+            if pendingScreenshot === pending {
+                pendingScreenshot = nil
+            }
+            stateLock.unlock()
+            return nil
+        }
+
+        let wait = pending.semaphore.wait(
+            timeout: .now() + timeout
+        )
+
+        stateLock.lock()
+        if pendingScreenshot === pending {
+            pendingScreenshot = nil
+        }
+        stateLock.unlock()
+
+        guard wait == .success,
+              let mimeType = pending.mimeType,
+              !mimeType.isEmpty,
+              let data = pending.data,
+              !data.isEmpty else {
+            return nil
+        }
+
+        return (mimeType, data)
+    }
+
     private func send(
         command: InjectionNextCommand,
         string: String?
@@ -510,6 +575,21 @@ private final class InjectionRuntimeClient {
         guard let pending else { return }
         pending.succeeded = succeeded
         pending.message = message
+        pending.semaphore.signal()
+    }
+
+    private func completeScreenshot(
+        mimeType: String,
+        data: Data
+    ) {
+        stateLock.lock()
+        let pending = pendingScreenshot
+        pendingScreenshot = nil
+        stateLock.unlock()
+
+        guard let pending else { return }
+        pending.mimeType = mimeType
+        pending.data = data
         pending.semaphore.signal()
     }
 
@@ -661,6 +741,15 @@ public final class InjectionNextRuntimeServer {
         return client.loadDylib(sourcePath: path)
     }
 
+    public func requestScreenshot()
+        -> (mimeType: String, data: Data)? {
+        stateLock.lock()
+        let client = currentClient
+        stateLock.unlock()
+
+        return client?.requestScreenshot()
+    }
+
     private func acceptLoop() {
         while listenerFD >= 0 {
             let fd = Darwin.accept(listenerFD, nil, nil)
@@ -729,7 +818,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "swift",
                 "objc",
                 "objc++",
-                "xcode-build-log"
+                "xcode-build-log",
+                "screenshot"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -857,6 +947,60 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                     code: "DYLIB_INJECTION_FAILED",
                     message: result.message ?? "Runtime failed to inject dylib."
                 )
+        )
+    }
+
+    public func screenshot(
+        path: String?
+    ) -> Result<ScreenshotResult, ControlError> {
+        guard let captured = runtimeServer.requestScreenshot() else {
+            return .failure(
+                ControlError(
+                    code: "SCREENSHOT_FAILED",
+                    message: "Unable to capture screenshot. Ensure the DEBUG app runtime is connected and has a visible window."
+                )
+            )
+        }
+
+        let outputPath: String
+        if let path, !path.isEmpty {
+            outputPath = normalize(path: path)
+        } else {
+            outputPath = URL(
+                fileURLWithPath: NSTemporaryDirectory()
+            )
+            .appendingPathComponent(
+                "agentInjectionIII-\(UUID().uuidString).png"
+            )
+            .path
+        }
+
+        let outputURL = URL(fileURLWithPath: outputPath)
+
+        do {
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try captured.data.write(
+                to: outputURL,
+                options: .atomic
+            )
+        } catch {
+            return .failure(
+                ControlError(
+                    code: "SCREENSHOT_WRITE_FAILED",
+                    message: "Unable to write screenshot to \(outputPath): \(error)"
+                )
+            )
+        }
+
+        return .success(
+            ScreenshotResult(
+                path: outputPath,
+                mimeType: captured.mimeType,
+                byteCount: captured.data.count
+            )
         )
     }
 
