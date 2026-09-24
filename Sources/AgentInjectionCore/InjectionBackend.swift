@@ -16,6 +16,7 @@ public protocol InjectionBackend: AnyObject {
     func inject(files: [String]) -> BackendInjectionResponse
     func loadDylib(path: String) -> BackendInjectionResponse
     func doctor(path: String?) -> DoctorReport
+    func screenshot(path: String?) -> Result<ScreenshotResult, ControlError>
 }
 
 /// Phase-1 backend.
@@ -92,6 +93,17 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                     message: "Scaffold backend has no injection engine."
                 )
             ]
+        )
+    }
+
+    public func screenshot(
+        path: String?
+    ) -> Result<ScreenshotResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "RUNTIME_NOT_READY",
+                message: "Scaffold backend has no connected app runtime."
+            )
         )
     }
 
