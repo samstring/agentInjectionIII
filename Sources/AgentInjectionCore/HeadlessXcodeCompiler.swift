@@ -246,7 +246,7 @@ final class HeadlessXcodeCompiler {
 
             if value.count >= 2,
                (value.hasPrefix("'") && value.hasSuffix("'") ||
-                value.hasPrefix(""") && value.hasSuffix(""")) {
+                value.hasPrefix("\"") && value.hasSuffix("\"")) {
                 value.removeFirst()
                 value.removeLast()
             }
