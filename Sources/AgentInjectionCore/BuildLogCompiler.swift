@@ -199,8 +199,13 @@ public final class BuildLogCompiler {
         source: String,
         platform: String
     ) -> CachedCommand? {
-        let escapedSource = source
-            .replacingOccurrences(of: " ", with: "\\ ")
+        let escapedSource = shellEscapePath(source)
+        let sourceForms = [
+            source,
+            escapedSource,
+            "\"\(source)\"",
+            shellQuote(source)
+        ]
         let basename = URL(fileURLWithPath: source).lastPathComponent
         let isSwift = source.hasSuffix(".swift")
 
@@ -227,15 +232,19 @@ public final class BuildLogCompiler {
                         line.contains("/\(platform).platform/")
                 else { continue }
 
+                let containsSource = sourceForms.contains {
+                    line.contains($0)
+                }
+
                 let isCandidate: Bool
                 if isSwift {
                     isCandidate =
-                        line.contains(" -primary-file \(source) ") ||
-                        line.contains(" -primary-file \(escapedSource) ")
+                        line.contains(" -primary-file ") &&
+                        containsSource
                 } else {
                     isCandidate =
-                        line.contains(" -c \(source) ") ||
-                        line.contains(" -c \(escapedSource) ")
+                        line.contains(" -c ") &&
+                        containsSource
                 }
 
                 guard isCandidate else { continue }
@@ -405,7 +414,11 @@ public final class BuildLogCompiler {
         object: String
     ) -> String {
         var command = original
-        let escapedSource = shellEscapePath(source)
+        let sourceTokens = [
+            shellEscapePath(source),
+            "\"\(source)\"",
+            shellQuote(source)
+        ]
 
         command = replacingRegex(
             " -o \(quotedArgumentRegex)",
@@ -418,10 +431,12 @@ public final class BuildLogCompiler {
             with: ""
         )
 
-        command = command.replacingOccurrences(
-            of: " -primary-file \(escapedSource)",
-            with: " -agent-primary \(escapedSource)"
-        )
+        for token in sourceTokens {
+            command = command.replacingOccurrences(
+                of: " -primary-file \(token)",
+                with: " -agent-primary \(token)"
+            )
+        }
 
         command = replacingRegex(
             " -primary-file \(quotedArgumentRegex)",
