@@ -134,7 +134,7 @@ This lets other developers keep their existing InjectionIII.app workflow.
 Use:
 
 ```bash
-"${SRCROOT}/path/to/agentInjectionIII/scripts/embed-runtime.sh"
+bash "${SRCROOT}/path/to/agentInjectionIII/scripts/embed-runtime.sh"
 ```
 
 If `~/.agentInjectionIII/runtime/iOSInjection.bundle` does not exist, the script is a no-op. Therefore teammates who have not installed agentInjectionIII are unaffected.
