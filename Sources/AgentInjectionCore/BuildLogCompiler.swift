@@ -630,13 +630,50 @@ private enum Shell {
             )
         }
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        let tmp = FileManager.default.temporaryDirectory
+        let token = UUID().uuidString
+        let stdoutURL = tmp.appendingPathComponent(
+            "agentInjectionIII-\(token).stdout"
+        )
+        let stderrURL = tmp.appendingPathComponent(
+            "agentInjectionIII-\(token).stderr"
+        )
+
+        FileManager.default.createFile(
+            atPath: stdoutURL.path,
+            contents: nil
+        )
+        FileManager.default.createFile(
+            atPath: stderrURL.path,
+            contents: nil
+        )
+
+        guard let stdoutHandle = try? FileHandle(
+            forWritingTo: stdoutURL
+        ),
+        let stderrHandle = try? FileHandle(
+            forWritingTo: stderrURL
+        ) else {
+            return ShellResult(
+                status: -1,
+                stdout: "",
+                stderr: "Unable to create process output files."
+            )
+        }
+
+        process.standardOutput = stdoutHandle
+        process.standardError = stderrHandle
+
+        defer {
+            try? stdoutHandle.close()
+            try? stderrHandle.close()
+            try? FileManager.default.removeItem(at: stdoutURL)
+            try? FileManager.default.removeItem(at: stderrURL)
+        }
 
         do {
             try process.run()
+            process.waitUntilExit()
         } catch {
             return ShellResult(
                 status: -1,
@@ -645,12 +682,13 @@ private enum Shell {
             )
         }
 
-        process.waitUntilExit()
+        try? stdoutHandle.synchronize()
+        try? stderrHandle.synchronize()
 
         let outData =
-            stdout.fileHandleForReading.readDataToEndOfFile()
+            (try? Data(contentsOf: stdoutURL)) ?? Data()
         let errData =
-            stderr.fileHandleForReading.readDataToEndOfFile()
+            (try? Data(contentsOf: stderrURL)) ?? Data()
 
         return ShellResult(
             status: process.terminationStatus,
@@ -665,3 +703,4 @@ private enum Shell {
         )
     }
 }
+
