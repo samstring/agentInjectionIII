@@ -240,6 +240,26 @@ public final class BuildLogCompiler {
         ) ? intermediates : nil
     }
 
+    public func buildSystem(
+        for source: String?
+    ) -> String {
+        guard let source else {
+            return "xcode"
+        }
+
+        if BazelInterface.findWorkspaceRoot(
+            containing: standardized(source)
+        ) != nil {
+            return "bazel"
+        }
+
+        if interceptedCommandCount() > 0 {
+            return "intercepted+xcode"
+        }
+
+        return "xcode"
+    }
+
     public func diagnostics(
         source: String? = nil,
         platform: String? = nil
@@ -699,10 +719,10 @@ public final class BuildLogCompiler {
                 ControlError(
                     code: "CODESIGN_FAILED",
                     message: """
-                    Failed to codesign injection dylib with identity (identity).
+                    Failed to codesign injection dylib with identity \(identity).
 
                     Output:
-                    (result.combinedOutput)
+                    \(result.combinedOutput)
                     """
                 )
             )
