@@ -1969,6 +1969,14 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         eventStore.clear()
     }
 
+    public func profileSnapshot(
+        limit: Int?
+    ) -> Result<ProfileResult, ControlError> {
+        traceServer.profileSnapshot(
+            limit: limit
+        )
+    }
+
     public func traceStart(
         filter: String?
     ) -> Result<TraceResult, ControlError> {
