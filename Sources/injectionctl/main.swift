@@ -40,6 +40,7 @@ private func printUsage() {
       injectionctl [--socket PATH] status
       injectionctl [--socket PATH] inject FILE [FILE ...]
       injectionctl [--socket PATH] load-dylib DYLIB
+      injectionctl [--socket PATH] doctor [SOURCE]
 
     Responses are JSON and commands return a non-zero exit status on failure.
     """)
@@ -110,6 +111,17 @@ case "load-dylib":
     request = ControlRequest(
         action: .loadDylib,
         path: absolutePath(options.arguments[1])
+    )
+
+case "doctor":
+    guard options.arguments.count <= 2 else {
+        fatalUsage("doctor accepts at most one source path.")
+    }
+    request = ControlRequest(
+        action: .doctor,
+        path: options.arguments.count == 2
+            ? absolutePath(options.arguments[1])
+            : nil
     )
 
 default:
