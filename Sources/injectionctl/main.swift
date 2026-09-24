@@ -57,6 +57,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] touch read
       injectionctl [--socket PATH] [--target ID] touch replay EVENTS.json
       injectionctl [--socket PATH] logs [LIMIT]
+      injectionctl [--socket PATH] compiler-state
       injectionctl [--socket PATH] logs clear
       injectionctl [--socket PATH] unhide-symbols
       injectionctl [--socket PATH] prepare-swiftui-source FILE.swift
@@ -358,6 +359,14 @@ case "env":
                 ? options.arguments[2]
                 : nil
         ]
+    )
+
+case "compiler-state":
+    guard options.arguments.count == 1 else {
+        fatalUsage("compiler-state does not accept arguments.")
+    }
+    request = ControlRequest(
+        action: .compilerState
     )
 
 case "profile":
