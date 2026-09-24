@@ -1307,13 +1307,18 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     private let projectRoot: String?
     private let compiler: BuildLogCompiler
     private let codeSigningIdentity: String?
+    private let swiftUIPreparer = SwiftUIPreparer()
+    private let backendStateLock = NSLock()
+    private var lastErrorValue: ControlError?
+    private var lastSourceValue: String?
 
     public init(
         runtimeServer: InjectionNextRuntimeServer,
         traceServer: AgentTraceServer,
         projectRoot: String? = nil,
         derivedDataRoot: String? = nil,
-        codeSigningIdentity: String? = nil
+        codeSigningIdentity: String? = nil,
+        xcodePath: String? = nil
     ) {
         self.runtimeServer = runtimeServer
         self.traceServer = traceServer
@@ -1321,8 +1326,15 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         self.codeSigningIdentity = codeSigningIdentity
         self.compiler = BuildLogCompiler(
             projectRoot: projectRoot,
-            derivedDataRoot: derivedDataRoot
+            derivedDataRoot: derivedDataRoot,
+            xcodePath: xcodePath
         )
+
+        if let xcodePath {
+            runtimeServer.setXcodePath(
+                xcodePath
+            )
+        }
     }
 
     public func status() -> BackendStatus {
@@ -1346,7 +1358,11 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 "device-injection",
                 "touch-capture",
                 "touch-replay",
-                "logs"
+                "logs",
+                "unhide-symbols",
+                "swiftui-prepare",
+                "xcode-selection",
+                "last-error"
             ],
             platform: runtime.platform,
             arch: runtime.arch,
@@ -1367,11 +1383,23 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         files: [String],
         target: String?
     ) -> BackendInjectionResponse {
+        clearLastError()
+
         let runtime = runtimeServer.status(
             target: target
         )
 
         guard runtime.connected else {
+            let error = ControlError(
+                code: "RUNTIME_NOT_CONNECTED",
+                message: "Launch a DEBUG app containing the InjectionNext client runtime."
+            )
+            record(
+                error: error,
+                source: files.first.map {
+                    normalize(path: $0)
+                }
+            )
             return BackendInjectionResponse(
                 results: files.map {
                     InjectionResult(
@@ -1381,28 +1409,32 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                         message: "No InjectionNext runtime is connected."
                     )
                 },
-                error: ControlError(
-                    code: "RUNTIME_NOT_CONNECTED",
-                    message: "Launch a DEBUG app containing the InjectionNext client runtime."
-                )
+                error: error
             )
         }
 
         guard let platform = runtime.platform,
               let arch = runtime.arch else {
+            let error = ControlError(
+                code: "RUNTIME_HANDSHAKE_INCOMPLETE",
+                message: "Runtime is connected but platform metadata is not ready."
+            )
+            record(
+                error: error,
+                source: files.first.map {
+                    normalize(path: $0)
+                }
+            )
             return BackendInjectionResponse(
                 results: files.map {
                     InjectionResult(
                         file: normalize(path: $0),
                         compiled: false,
                         injected: false,
-                        message: "Runtime handshake has not reported platform/architecture yet."
+                        message: error.message
                     )
                 },
-                error: ControlError(
-                    code: "RUNTIME_HANDSHAKE_INCOMPLETE",
-                    message: "Runtime is connected but platform metadata is not ready."
-                )
+                error: error
             )
         }
 
@@ -1420,6 +1452,10 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             case .failure(let error):
                 if firstError == nil {
                     firstError = error
+                    record(
+                        error: error,
+                        source: source
+                    )
                 }
                 results.append(
                     InjectionResult(
@@ -1443,6 +1479,10 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                         )
                         if firstError == nil {
                             firstError = error
+                            record(
+                                error: error,
+                                source: source
+                            )
                         }
                         results.append(
                             InjectionResult(
@@ -1490,11 +1530,17 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
                 let detail = runtimeResult.message
 
-                if !runtimeResult.injected, firstError == nil {
-                    firstError = ControlError(
+                if !runtimeResult.injected,
+                   firstError == nil {
+                    let error = ControlError(
                         code: "DYLIB_INJECTION_FAILED",
                         message: runtimeResult.message
                             ?? "Runtime failed to inject compiled dylib."
+                    )
+                    firstError = error
+                    record(
+                        error: error,
+                        source: source
                     )
                 }
 
@@ -1527,14 +1573,26 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             target: target
         )
 
+        let error: ControlError?
+        if result.injected {
+            error = nil
+            clearLastError()
+        } else {
+            let failure = ControlError(
+                code: "DYLIB_INJECTION_FAILED",
+                message: result.message
+                    ?? "Runtime failed to inject dylib."
+            )
+            error = failure
+            record(
+                error: failure,
+                source: normalized
+            )
+        }
+
         return BackendInjectionResponse(
             results: [result],
-            error: result.injected
-                ? nil
-                : ControlError(
-                    code: "DYLIB_INJECTION_FAILED",
-                    message: result.message ?? "Runtime failed to inject dylib."
-                )
+            error: error
         )
     }
 
@@ -1675,6 +1733,150 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         #endif
     }
 
+    public func prepareSwiftUISource(
+        path: String
+    ) -> Result<OperationResult, ControlError> {
+        let source = normalize(path: path)
+
+        guard source.hasSuffix(".swift"),
+              FileManager.default.fileExists(
+                atPath: source
+              ) else {
+            return .failure(
+                ControlError(
+                    code: "SWIFTUI_SOURCE_NOT_FOUND",
+                    message: "Swift source not found: \(source)"
+                )
+            )
+        }
+
+        do {
+            let result = try swiftUIPreparer
+                .prepareSource(source)
+
+            return .success(
+                OperationResult(
+                    message: result.changes == 0
+                        ? "No SwiftUI injection edits were needed for \(source)."
+                        : "Applied \(result.changes) SwiftUI injection edit(s) to \(source)."
+                )
+            )
+        } catch {
+            return .failure(
+                ControlError(
+                    code: "SWIFTUI_PREPARE_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+    }
+
+    public func prepareSwiftUIProject()
+        -> Result<OperationResult, ControlError> {
+        let sources = compiler.knownSwiftSources()
+
+        guard !sources.isEmpty else {
+            return .failure(
+                ControlError(
+                    code: "SWIFTUI_PROJECT_SOURCES_NOT_FOUND",
+                    message: "No compiled Swift sources were recovered from Xcode build logs. Build the target once first."
+                )
+            )
+        }
+
+        let result = swiftUIPreparer
+            .prepareProject(
+                sources: sources
+            )
+
+        return .success(
+            OperationResult(
+                message: "Applied \(result.changes) SwiftUI injection edit(s) across \(result.filesEdited) of \(sources.count) compiled Swift file(s)."
+            )
+        )
+    }
+
+    public func setXcodePath(
+        path: String
+    ) -> Result<OperationResult, ControlError> {
+        let expanded = NSString(
+            string: path
+        ).expandingTildeInPath
+        let developer = URL(
+            fileURLWithPath: expanded
+        )
+        .appendingPathComponent(
+            "Contents/Developer"
+        )
+        .path
+
+        guard FileManager.default
+                .fileExists(atPath: developer) else {
+            return .failure(
+                ControlError(
+                    code: "XCODE_NOT_FOUND",
+                    message: "Xcode.app not found or invalid: \(expanded)"
+                )
+            )
+        }
+
+        compiler.setXcodePath(expanded)
+        runtimeServer.setXcodePath(expanded)
+
+        return .success(
+            OperationResult(
+                message: "Selected Xcode: \(expanded)"
+            )
+        )
+    }
+
+    public func launchXcode()
+        -> Result<OperationResult, ControlError> {
+        guard let xcode = compiler.xcodePath(),
+              FileManager.default.fileExists(
+                atPath: xcode
+              ) else {
+            return .failure(
+                ControlError(
+                    code: "XCODE_NOT_FOUND",
+                    message: "No valid Xcode path is selected."
+                )
+            )
+        }
+
+        let process = Process()
+        process.executableURL = URL(
+            fileURLWithPath: "/usr/bin/open"
+        )
+        process.arguments = [xcode]
+
+        do {
+            try process.run()
+            return .success(
+                OperationResult(
+                    message: "Launched Xcode: \(xcode)"
+                )
+            )
+        } catch {
+            return .failure(
+                ControlError(
+                    code: "XCODE_LAUNCH_FAILED",
+                    message: String(describing: error)
+                )
+            )
+        }
+    }
+
+    public func lastError() -> LastErrorResult {
+        backendStateLock.lock()
+        defer { backendStateLock.unlock() }
+
+        return LastErrorResult(
+            source: lastSourceValue,
+            error: lastErrorValue
+        )
+    }
+
     public func traceStart(
         filter: String?
     ) -> Result<TraceResult, ControlError> {
@@ -1703,14 +1905,14 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
 
         var checks = [DoctorCheck]()
 
-        let xcode = Self.selectedXcodeDeveloperDirectory()
+        let xcode = compiler.xcodePath()
         checks.append(
             DoctorCheck(
                 name: "xcode",
                 state: xcode == nil ? .fail : .pass,
                 message: xcode.map {
-                    "Selected Xcode developer directory: \($0)"
-                } ?? "xcode-select -p did not return a usable developer directory."
+                    "Selected Xcode application: \($0)"
+                } ?? "No usable Xcode application is selected."
             )
         )
 
@@ -1780,7 +1982,7 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         }
 
         let localRuntime = NSString(
-            string: "~/.agentInjectionIII/runtime/iOSInjection.bundle"
+            string: "~/.agentInjectionIII/runtime/simulator/iOSInjection.bundle"
         ).expandingTildeInPath
         let runtimeInstalled = FileManager.default.fileExists(
             atPath: localRuntime
@@ -1848,6 +2050,23 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 temporaryPath: runtime.temporaryPath
             )
         )
+    }
+
+    private func record(
+        error: ControlError,
+        source: String?
+    ) {
+        backendStateLock.lock()
+        lastErrorValue = error
+        lastSourceValue = source
+        backendStateLock.unlock()
+    }
+
+    private func clearLastError() {
+        backendStateLock.lock()
+        lastErrorValue = nil
+        lastSourceValue = nil
+        backendStateLock.unlock()
     }
 
     private static func selectedXcodeDeveloperDirectory() -> String? {
