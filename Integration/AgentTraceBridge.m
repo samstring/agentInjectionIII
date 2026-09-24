@@ -303,6 +303,120 @@ static BOOL AgentTraceOutputInstalled = NO;
         return;
     }
 
+    if ([action isEqualToString:@"call_order"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            Class bridge =
+                NSClassFromString(@"AgentInjectionRuntimeBridge");
+            SEL selector =
+                NSSelectorFromString(@"callOrder");
+
+            if (!bridge ||
+                ![bridge respondsToSelector:selector]) {
+                [self sendTraceState:@"error"
+                               error:@"Agent runtime call-order bridge is unavailable. Reinstall the agent runtime."];
+                return;
+            }
+
+            typedef id (*ObjectSend)(id, SEL);
+            NSArray *signatures =
+                ((ObjectSend)objc_msgSend)(
+                    bridge,
+                    selector
+                ) ?: @[];
+
+            [self sendJSONObject:@{
+                @"type": @"call_order",
+                @"timestamp":
+                    @([NSDate timeIntervalSinceReferenceDate]),
+                @"signatures": signatures
+            }];
+        });
+        return;
+    }
+
+    if ([action isEqualToString:@"instances_start"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            Class bridge =
+                NSClassFromString(@"AgentInjectionRuntimeBridge");
+            SEL selector =
+                NSSelectorFromString(@"startLifetimeTracking");
+
+            if (!bridge ||
+                ![bridge respondsToSelector:selector]) {
+                [self sendTraceState:@"error"
+                               error:@"Agent runtime lifetime bridge is unavailable. Reinstall the agent runtime."];
+                return;
+            }
+
+            typedef NSInteger (*IntegerSend)(id, SEL);
+            ((IntegerSend)objc_msgSend)(
+                bridge,
+                selector
+            );
+
+            [self sendTraceState:@"instances_started"
+                           error:nil];
+        });
+        return;
+    }
+
+    if ([action isEqualToString:@"instances_read"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            Class bridge =
+                NSClassFromString(@"AgentInjectionRuntimeBridge");
+            SEL selector =
+                NSSelectorFromString(@"instanceCounts");
+
+            if (!bridge ||
+                ![bridge respondsToSelector:selector]) {
+                [self sendTraceState:@"error"
+                               error:@"Agent runtime instance-count bridge is unavailable. Reinstall the agent runtime."];
+                return;
+            }
+
+            typedef id (*ObjectSend)(id, SEL);
+            NSDictionary *counts =
+                ((ObjectSend)objc_msgSend)(
+                    bridge,
+                    selector
+                ) ?: @{};
+
+            [self sendJSONObject:@{
+                @"type": @"instance_counts",
+                @"timestamp":
+                    @([NSDate timeIntervalSinceReferenceDate]),
+                @"counts": counts
+            }];
+        });
+        return;
+    }
+
+    if ([action isEqualToString:@"instances_stop"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            Class bridge =
+                NSClassFromString(@"AgentInjectionRuntimeBridge");
+            SEL selector =
+                NSSelectorFromString(@"stopLifetimeTracking");
+
+            if (!bridge ||
+                ![bridge respondsToSelector:selector]) {
+                [self sendTraceState:@"error"
+                               error:@"Agent runtime lifetime bridge is unavailable. Reinstall the agent runtime."];
+                return;
+            }
+
+            typedef void (*VoidSend)(id, SEL);
+            ((VoidSend)objc_msgSend)(
+                bridge,
+                selector
+            );
+
+            [self sendTraceState:@"instances_stopped"
+                           error:nil];
+        });
+        return;
+    }
+
     if ([action isEqualToString:@"profile_snapshot"]) {
         dispatch_async(dispatch_get_main_queue(), ^{
             SEL elapsedSelector =
