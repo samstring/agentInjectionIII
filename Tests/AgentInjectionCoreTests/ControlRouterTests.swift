@@ -103,6 +103,30 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.error?.code, "MISSING_PATH")
     }
 
+    func testTraceFailsCleanlyWithoutBridge() throws {
+        let backend = ScaffoldInjectionBackend()
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        for action in [
+            ControlAction.traceStart,
+            ControlAction.traceRead,
+            ControlAction.traceStop
+        ] {
+            let request = ControlRequest(action: action)
+            let response = try route(request, through: router)
+
+            XCTAssertFalse(response.ok)
+            XCTAssertEqual(
+                response.error?.code,
+                "TRACE_BRIDGE_NOT_READY"
+            )
+            XCTAssertNil(response.trace)
+        }
+    }
+
     func testScreenshotFailsCleanlyWithoutRuntime() throws {
         let backend = ScaffoldInjectionBackend()
         let router = ControlRouter(
