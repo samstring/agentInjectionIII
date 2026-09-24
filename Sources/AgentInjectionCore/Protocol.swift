@@ -31,6 +31,9 @@ public struct BackendStatus: Codable, Sendable {
     public let ready: Bool
     public let appConnected: Bool
     public let capabilities: [String]
+    public let platform: String?
+    public let arch: String?
+    public let temporaryPath: String?
     public let detail: String?
 
     public init(
@@ -38,12 +41,18 @@ public struct BackendStatus: Codable, Sendable {
         ready: Bool,
         appConnected: Bool,
         capabilities: [String],
+        platform: String? = nil,
+        arch: String? = nil,
+        temporaryPath: String? = nil,
         detail: String? = nil
     ) {
         self.name = name
         self.ready = ready
         self.appConnected = appConnected
         self.capabilities = capabilities
+        self.platform = platform
+        self.arch = arch
+        self.temporaryPath = temporaryPath
         self.detail = detail
     }
 }
