@@ -45,7 +45,7 @@ let package = Package(
                 ),
                 .product(
                     name: "SwiftRegexD",
-                    package: "SwiftRegex"
+                    package: "SwiftRegex5"
                 )
             ]
         ),
