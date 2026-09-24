@@ -15,6 +15,7 @@
         NSBundle *embedded = [NSBundle bundleWithPath:embeddedPath];
         if ([embedded load]) {
             NSLog(@"agentInjectionIII: loaded embedded runtime");
+            [AgentTraceBridge start];
             return;
         }
 
