@@ -151,7 +151,7 @@ final class BuildLogCompilerTests: XCTestCase {
         )
         XCTAssertEqual(
             diagnostics.newestBuildLog,
-            log.standardizedFileURL.path
+            log.resolvingSymlinksInPath().path
         )
     }
 
@@ -197,7 +197,7 @@ final class BuildLogCompilerTests: XCTestCase {
         )
         XCTAssertEqual(
             diagnostics.newestBuildLog,
-            log.standardizedFileURL.path
+            log.resolvingSymlinksInPath().path
         )
     }
 
