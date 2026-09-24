@@ -209,6 +209,96 @@ public final class AgentTraceServer {
         return .success(result)
     }
 
+    public func startTraceScope(
+        scope: String,
+        name: String?,
+        filter: String?
+    ) -> Result<TraceResult, ControlError> {
+        let bridge: TraceBridgeClient
+        let pending = PendingTraceCommand(
+            expectedState: "started"
+        )
+
+        lock.lock()
+        guard let connected = client else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_BRIDGE_NOT_CONNECTED",
+                    message: "AgentTraceBridge is not connected."
+                )
+            )
+        }
+        guard pendingCommand == nil else {
+            lock.unlock()
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_BUSY",
+                    message: "Another trace command is still pending."
+                )
+            )
+        }
+
+        bridge = connected
+        events.removeAll(keepingCapacity: true)
+        pendingCommand = pending
+        lock.unlock()
+
+        do {
+            try bridge.send(
+                action: "trace_scope",
+                filter: filter,
+                scope: scope,
+                name: name
+            )
+        } catch {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_FAILED",
+                    message: "Unable to send scoped trace command: \(error)"
+                )
+            )
+        }
+
+        guard pending.semaphore.wait(
+            timeout: .now() + 20
+        ) == .success else {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_COMMAND_TIMEOUT",
+                    message: "Timed out waiting for scoped tracing to start."
+                )
+            )
+        }
+
+        if let error = pending.error {
+            clearPending(pending)
+            return .failure(
+                ControlError(
+                    code: "TRACE_START_FAILED",
+                    message: error
+                )
+            )
+        }
+
+        clearPending(pending)
+
+        lock.lock()
+        active = true
+        activeFilter = filter
+        let result = TraceResult(
+            connected: true,
+            active: true,
+            filter: filter,
+            events: []
+        )
+        lock.unlock()
+
+        return .success(result)
+    }
+
     public func stopTrace()
         -> Result<TraceResult, ControlError> {
         let client: TraceBridgeClient
@@ -614,6 +704,8 @@ private struct TraceBridgeMessage: Decodable {
 private struct TraceBridgeCommand: Encodable {
     let action: String
     let filter: String?
+    let scope: String?
+    let name: String?
 }
 
 private final class TraceBridgeClient {
@@ -682,11 +774,15 @@ private final class TraceBridgeClient {
 
     func send(
         action: String,
-        filter: String?
+        filter: String?,
+        scope: String? = nil,
+        name: String? = nil
     ) throws {
         let command = TraceBridgeCommand(
             action: action,
-            filter: filter
+            filter: filter,
+            scope: scope,
+            name: name
         )
 
         var data = try JSONEncoder().encode(command)
