@@ -8,6 +8,8 @@ private struct DaemonOptions {
     var runtimePort: UInt16 = 8887
     var tracePort: UInt16 = 8888
     var derivedDataRoot: String?
+    var enableDevices = false
+    var codeSigningIdentity: String?
 }
 
 private func parseOptions() -> DaemonOptions {
@@ -49,6 +51,17 @@ private func parseOptions() -> DaemonOptions {
             options.tracePort = port
             index += 2
 
+        case "--enable-devices":
+            options.enableDevices = true
+            index += 1
+
+        case "--codesign-identity":
+            guard index + 1 < arguments.count else {
+                fatalUsage("--codesign-identity requires a value")
+            }
+            options.codeSigningIdentity = arguments[index + 1]
+            index += 2
+
         case "--derived-data":
             guard index + 1 < arguments.count else {
                 fatalUsage("--derived-data requires a path")
@@ -70,7 +83,7 @@ private func parseOptions() -> DaemonOptions {
 
 private func printUsage() {
     print("""
-    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH]
+    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH] [--enable-devices] [--codesign-identity IDENTITY]
 
       --socket PATH       Unix domain socket path for injectionctl.
                           Default: /tmp/agentInjectionIII.sock
@@ -80,6 +93,9 @@ private func printUsage() {
       --trace-port PORT   AgentTraceBridge TCP port.
                           Default: 8888
       --derived-data PATH Override Xcode DerivedData root used for build-log discovery.
+      --enable-devices    Listen on all interfaces and answer InjectionNext device discovery.
+      --codesign-identity IDENTITY
+                          Expanded Apple code signing identity used for physical-device dylibs.
     """)
 }
 
@@ -91,7 +107,8 @@ private func fatalUsage(_ message: String) -> Never {
 
 let options = parseOptions()
 let runtimeServer = InjectionNextRuntimeServer(
-    port: options.runtimePort
+    port: options.runtimePort,
+    devicesEnabled: options.enableDevices
 )
 
 do {
@@ -116,7 +133,8 @@ let backend = InjectionNextRuntimeBackend(
     runtimeServer: runtimeServer,
     traceServer: traceServer,
     projectRoot: options.projectRoot,
-    derivedDataRoot: options.derivedDataRoot
+    derivedDataRoot: options.derivedDataRoot,
+    codeSigningIdentity: options.codeSigningIdentity
 )
 let router = ControlRouter(
     socketPath: options.socketPath,
@@ -130,7 +148,7 @@ let server = UnixSocketServer(
 fputs(
     "agentInjectionIII injectiond \(ControlRouter.daemonVersion)\n" +
     "  control: \(options.socketPath)\n" +
-    "  runtime: 127.0.0.1:\(options.runtimePort)\n" +
+    "  runtime: \(options.enableDevices ? "0.0.0.0" : "127.0.0.1"):\(options.runtimePort)\n" +
     "  trace:   127.0.0.1:\(options.tracePort)\n",
     stderr
 )
