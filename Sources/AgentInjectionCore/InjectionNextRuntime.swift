@@ -482,49 +482,59 @@ private final class InjectionRuntimeClient {
             )
         }
 
-        guard let tmpPath = status().temporaryPath else {
-            return InjectionResult(
-                file: sourcePath,
-                compiled: true,
-                injected: false,
-                message: "Runtime is connected but has not reported its temporary path yet."
-            )
-        }
-
-        let destinationURL = URL(fileURLWithPath: tmpPath)
-            .appendingPathComponent(
-                "agent_injection_\(UUID().uuidString).dylib"
-            )
-
-        do {
-            try FileManager.default.copyItem(
-                at: sourceURL,
-                to: destinationURL
-            )
-        } catch {
-            return InjectionResult(
-                file: sourcePath,
-                compiled: true,
-                injected: false,
-                message: "Unable to copy dylib into runtime temp directory: \(error)"
-            )
-        }
-
-        defer {
-            try? FileManager.default.removeItem(at: destinationURL)
-        }
-
         let pending = PendingRuntimeInjection()
 
         stateLock.lock()
+        guard pendingInjection == nil else {
+            stateLock.unlock()
+            return InjectionResult(
+                file: sourcePath,
+                compiled: true,
+                injected: false,
+                message: "Another runtime injection is already pending."
+            )
+        }
         pendingInjection = pending
         stateLock.unlock()
 
+        var localTemporaryDylib: URL?
+
         do {
-            try send(
-                command: .load,
-                string: destinationURL.path
-            )
+            if isLocal {
+                guard let tmpPath = status().temporaryPath else {
+                    throw ControlError(
+                        code: "RUNTIME_HANDSHAKE_INCOMPLETE",
+                        message: "Runtime has not reported its temporary path yet."
+                    )
+                }
+
+                let destinationURL = URL(
+                    fileURLWithPath: tmpPath
+                )
+                .appendingPathComponent(
+                    "agent_injection_\(UUID().uuidString).dylib"
+                )
+
+                try FileManager.default.copyItem(
+                    at: sourceURL,
+                    to: destinationURL
+                )
+                localTemporaryDylib = destinationURL
+
+                try send(
+                    command: .load,
+                    string: destinationURL.path
+                )
+            } else {
+                let data = try Data(
+                    contentsOf: sourceURL,
+                    options: [.mappedIfSafe]
+                )
+                try sendRemoteInjection(
+                    name: sourceURL.lastPathComponent,
+                    data: data
+                )
+            }
         } catch {
             stateLock.lock()
             if pendingInjection === pending {
@@ -532,11 +542,17 @@ private final class InjectionRuntimeClient {
             }
             stateLock.unlock()
 
+            if let localTemporaryDylib {
+                try? FileManager.default.removeItem(
+                    at: localTemporaryDylib
+                )
+            }
+
             return InjectionResult(
                 file: sourcePath,
                 compiled: true,
                 injected: false,
-                message: "Unable to send load command: \(error)"
+                message: "Unable to send injection dylib: \(error)"
             )
         }
 
@@ -549,6 +565,12 @@ private final class InjectionRuntimeClient {
             pendingInjection = nil
         }
         stateLock.unlock()
+
+        if let localTemporaryDylib {
+            try? FileManager.default.removeItem(
+                at: localTemporaryDylib
+            )
+        }
 
         guard waitResult == .success else {
             return InjectionResult(
@@ -565,6 +587,68 @@ private final class InjectionRuntimeClient {
             injected: pending.succeeded == true,
             message: pending.message
         )
+    }
+
+    func captureTouchEvents() throws {
+        try send(
+            command: .captureEvents,
+            string: nil
+        )
+    }
+
+    func drainTouchEvents() -> [String] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        let drained = touchEvents
+        touchEvents.removeAll(
+            keepingCapacity: true
+        )
+        return drained
+    }
+
+    func replayTouchEvents(
+        _ payload: String,
+        timeout: TimeInterval = 15
+    ) -> Bool {
+        operationLock.lock()
+        defer { operationLock.unlock() }
+
+        let pending = PendingTouchReplay()
+
+        stateLock.lock()
+        guard pendingTouchReplay == nil else {
+            stateLock.unlock()
+            return false
+        }
+        pendingTouchReplay = pending
+        stateLock.unlock()
+
+        do {
+            try send(
+                command: .replayEvents,
+                string: payload
+            )
+        } catch {
+            stateLock.lock()
+            if pendingTouchReplay === pending {
+                pendingTouchReplay = nil
+            }
+            stateLock.unlock()
+            return false
+        }
+
+        let wait = pending.semaphore.wait(
+            timeout: .now() + timeout
+        )
+
+        stateLock.lock()
+        if pendingTouchReplay === pending {
+            pendingTouchReplay = nil
+        }
+        stateLock.unlock()
+
+        return wait == .success
     }
 
     func requestScreenshot(
@@ -618,6 +702,31 @@ private final class InjectionRuntimeClient {
         return (mimeType, data)
     }
 
+    private func sendRemoteInjection(
+        name: String,
+        data: Data
+    ) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
+        try InjectionNextWire.writeInt(
+            InjectionNextCommand.inject.rawValue,
+            to: fd
+        )
+        try InjectionNextWire.writeString(
+            name,
+            to: fd
+        )
+        try InjectionNextWire.writeData(
+            data,
+            to: fd
+        )
+
+        logStore.append(
+            "Sent \(data.count) bytes to device target \(id)"
+        )
+    }
+
     private func send(
         command: InjectionNextCommand,
         string: String?
@@ -657,6 +766,19 @@ private final class InjectionRuntimeClient {
         guard let pending else { return }
         pending.succeeded = succeeded
         pending.message = message
+        pending.semaphore.signal()
+    }
+
+    private func completeTouchReplay(
+        _ payload: String
+    ) {
+        stateLock.lock()
+        let pending = pendingTouchReplay
+        pendingTouchReplay = nil
+        stateLock.unlock()
+
+        guard let pending else { return }
+        pending.payload = payload
         pending.semaphore.signal()
     }
 
