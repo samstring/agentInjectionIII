@@ -10,6 +10,7 @@ private struct DaemonOptions {
     var derivedDataRoot: String?
     var enableDevices = false
     var codeSigningIdentity: String?
+    var xcodePath: String?
 }
 
 private func parseOptions() -> DaemonOptions {
@@ -62,6 +63,13 @@ private func parseOptions() -> DaemonOptions {
             options.codeSigningIdentity = arguments[index + 1]
             index += 2
 
+        case "--xcode-path":
+            guard index + 1 < arguments.count else {
+                fatalUsage("--xcode-path requires an Xcode.app path")
+            }
+            options.xcodePath = arguments[index + 1]
+            index += 2
+
         case "--derived-data":
             guard index + 1 < arguments.count else {
                 fatalUsage("--derived-data requires a path")
@@ -83,7 +91,7 @@ private func parseOptions() -> DaemonOptions {
 
 private func printUsage() {
     print("""
-    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH] [--enable-devices] [--codesign-identity IDENTITY]
+    usage: injectiond [--socket PATH] [--project ROOT] [--runtime-port PORT] [--trace-port PORT] [--derived-data PATH] [--xcode-path XCODE.app] [--enable-devices] [--codesign-identity IDENTITY]
 
       --socket PATH       Unix domain socket path for injectionctl.
                           Default: /tmp/agentInjectionIII.sock
@@ -93,6 +101,7 @@ private func printUsage() {
       --trace-port PORT   AgentTraceBridge TCP port.
                           Default: 8888
       --derived-data PATH Override Xcode DerivedData root used for build-log discovery.
+      --xcode-path PATH   Xcode.app to use instead of xcode-select.
       --enable-devices    Listen on all interfaces and answer InjectionNext device discovery.
       --codesign-identity IDENTITY
                           Expanded Apple code signing identity used for physical-device dylibs.
@@ -108,7 +117,8 @@ private func fatalUsage(_ message: String) -> Never {
 let options = parseOptions()
 let runtimeServer = InjectionNextRuntimeServer(
     port: options.runtimePort,
-    devicesEnabled: options.enableDevices
+    devicesEnabled: options.enableDevices,
+    xcodePath: options.xcodePath
 )
 
 do {
@@ -134,7 +144,8 @@ let backend = InjectionNextRuntimeBackend(
     traceServer: traceServer,
     projectRoot: options.projectRoot,
     derivedDataRoot: options.derivedDataRoot,
-    codeSigningIdentity: options.codeSigningIdentity
+    codeSigningIdentity: options.codeSigningIdentity,
+    xcodePath: options.xcodePath
 )
 let router = ControlRouter(
     socketPath: options.socketPath,
