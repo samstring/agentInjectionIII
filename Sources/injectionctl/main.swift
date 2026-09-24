@@ -64,6 +64,8 @@ private func printUsage() {
       injectionctl [--socket PATH] set-xcode-path /Applications/Xcode.app
       injectionctl [--socket PATH] launch-xcode
       injectionctl [--socket PATH] last-error
+      injectionctl [--socket PATH] events [LIMIT]
+      injectionctl [--socket PATH] events clear
       injectionctl [--socket PATH] trace start [FILTER_REGEX]
       injectionctl [--socket PATH] trace read [LIMIT]
       injectionctl [--socket PATH] trace stop
@@ -302,6 +304,32 @@ case "last-error":
     request = ControlRequest(
         action: .getLastError
     )
+
+case "events":
+    if options.arguments.count == 2 &&
+       options.arguments[1] == "clear" {
+        request = ControlRequest(
+            action: .clearEvents
+        )
+    } else {
+        guard options.arguments.count <= 2 else {
+            fatalUsage("events accepts at most one LIMIT or 'clear'.")
+        }
+
+        var limit: Int?
+        if options.arguments.count == 2 {
+            guard let parsed = Int(options.arguments[1]),
+                  parsed > 0 else {
+                fatalUsage("events limit must be a positive integer.")
+            }
+            limit = parsed
+        }
+
+        request = ControlRequest(
+            action: .events,
+            limit: limit
+        )
+    }
 
 case "trace":
     guard options.arguments.count >= 2 else {
