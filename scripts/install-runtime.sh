@@ -2,7 +2,9 @@
 set -euo pipefail
 
 UPSTREAM_REPO="${AGENT_INJECTION_UPSTREAM:-https://github.com/johnno1962/InjectionNext.git}"
-UPSTREAM_REF="${AGENT_INJECTION_UPSTREAM_REF:-main}"
+# Pin the protocol/runtime revision used by agentInjectionIII. Override only
+# when intentionally validating a newer InjectionNext wire/runtime version.
+UPSTREAM_REF="${AGENT_INJECTION_UPSTREAM_REF:-39eef8a203b5093a8fbb7334d3a59f03624d2c01}"
 ROOT="${AGENT_INJECTION_HOME:-$HOME/.agentInjectionIII}"
 SRC="$ROOT/upstream/InjectionNext"
 BUILD="$ROOT/build"
