@@ -299,6 +299,20 @@ public final class ControlRouter {
                 result: backend.lastError()
             )
 
+        case .events:
+            return .events(
+                id: request.id,
+                result: backend.events(
+                    limit: request.limit
+                )
+            )
+
+        case .clearEvents:
+            return .events(
+                id: request.id,
+                result: backend.clearEvents()
+            )
+
         case .traceStart:
             switch backend.traceStart(filter: request.filter) {
             case .success(let result):
