@@ -29,6 +29,8 @@ public protocol InjectionBackend: AnyObject {
     func setXcodePath(path: String) -> Result<OperationResult, ControlError>
     func launchXcode() -> Result<OperationResult, ControlError>
     func lastError() -> LastErrorResult
+    func events(limit: Int?) -> InjectionEventsResult
+    func clearEvents() -> InjectionEventsResult
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
@@ -232,6 +234,17 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
 
     public func lastError() -> LastErrorResult {
         LastErrorResult()
+    }
+
+    public func events(
+        limit: Int?
+    ) -> InjectionEventsResult {
+        InjectionEventsResult(events: [])
+    }
+
+    public func clearEvents()
+        -> InjectionEventsResult {
+        InjectionEventsResult(events: [])
     }
 
     public func traceStart(
