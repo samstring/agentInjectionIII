@@ -37,6 +37,11 @@ public protocol InjectionBackend: AnyObject {
         target: String?
     ) -> Result<OperationResult, ControlError>
     func traceStart(filter: String?) -> Result<TraceResult, ControlError>
+    func traceScope(
+        scope: String,
+        name: String?,
+        filter: String?
+    ) -> Result<TraceResult, ControlError>
     func traceStop() -> Result<TraceResult, ControlError>
     func traceRead(limit: Int?) -> Result<TraceResult, ControlError>
 }
@@ -282,6 +287,19 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
             ControlError(
                 code: "TRACE_BRIDGE_NOT_READY",
                 message: "Scaffold backend has no trace bridge."
+            )
+        )
+    }
+
+    public func traceScope(
+        scope: String,
+        name: String?,
+        filter: String?
+    ) -> Result<TraceResult, ControlError> {
+        .failure(
+            ControlError(
+                code: "TRACE_BRIDGE_NOT_READY",
+                message: "Scaffold backend has no scoped tracing bridge."
             )
         )
     }
