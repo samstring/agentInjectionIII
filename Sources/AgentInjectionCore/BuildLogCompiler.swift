@@ -31,6 +31,7 @@ public final class BuildLogCompiler {
 
     private let projectRoot: String?
     private let derivedDataRoot: String?
+    private let cacheURL: URL
     private let fileManager = FileManager.default
     private let cacheLock = NSLock()
     private var memoryCache: [String: CachedCommand] = [:]
@@ -43,10 +44,34 @@ public final class BuildLogCompiler {
 
     public init(
         projectRoot: String? = nil,
-        derivedDataRoot: String? = nil
+        derivedDataRoot: String? = nil,
+        cacheRoot: String? = nil
     ) {
         self.projectRoot = projectRoot
         self.derivedDataRoot = derivedDataRoot
+
+        let root: URL
+        if let cacheRoot {
+            root = URL(
+                fileURLWithPath: NSString(
+                    string: cacheRoot
+                ).expandingTildeInPath
+            )
+        } else {
+            root = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".agentInjectionIII/cache")
+        }
+
+        self.cacheURL = root
+            .appendingPathComponent("compile-commands.json")
+
+        if let data = try? Data(contentsOf: cacheURL),
+           let cached = try? JSONDecoder().decode(
+                [String: CachedCommand].self,
+                from: data
+           ) {
+            self.memoryCache = cached
+        }
     }
 
     public func diagnostics(
@@ -124,9 +149,11 @@ public final class BuildLogCompiler {
 
         let cacheKey = source + "|" + platform
         let located: CachedCommand
+        let usedPersistentOrMemoryCache: Bool
 
         if let cached = cachedCommand(for: cacheKey) {
             located = cached
+            usedPersistentOrMemoryCache = true
         } else {
             guard let command = locateCompilationCommand(
                 source: source,
@@ -143,6 +170,7 @@ public final class BuildLogCompiler {
             }
 
             located = command
+            usedPersistentOrMemoryCache = false
             store(command, for: cacheKey)
         }
 
@@ -214,6 +242,15 @@ public final class BuildLogCompiler {
         guard compileResult.status == 0,
               fileManager.fileExists(atPath: object) else {
             invalidate(cacheKey)
+
+            if usedPersistentOrMemoryCache {
+                return compileAndLink(
+                    source: source,
+                    platform: platform,
+                    arch: arch
+                )
+            }
+
             return .failure(
                 ControlError(
                     code: "COMPILE_FAILED",
@@ -839,13 +876,33 @@ public final class BuildLogCompiler {
     ) {
         cacheLock.lock()
         memoryCache[key] = command
+        persistCacheLocked()
         cacheLock.unlock()
     }
 
     private func invalidate(_ key: String) {
         cacheLock.lock()
         memoryCache.removeValue(forKey: key)
+        persistCacheLocked()
         cacheLock.unlock()
+    }
+
+    private func persistCacheLocked() {
+        let directory = cacheURL.deletingLastPathComponent()
+
+        do {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(memoryCache)
+            try data.write(
+                to: cacheURL,
+                options: [.atomic]
+            )
+        } catch {
+            // Cache persistence must never make injection itself fail.
+        }
     }
 
     private func standardized(_ path: String) -> String {
