@@ -2,13 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SOCKET="/tmp/agentInjectionIII-smoke-$$.sock"
+SOCKET="/tmp/agentInjectionIII-smoke-$.sock"
+RUNTIME_PORT=$((20000 + ($ % 10000)))
+TRACE_PORT=$((RUNTIME_PORT + 1))
 
 cd "$ROOT"
 
 swift build
 
-"$ROOT/.build/debug/injectiond" --socket "$SOCKET" >/tmp/agentInjectionIII-smoke.log 2>&1 &
+"$ROOT/.build/debug/injectiond" \
+  --socket "$SOCKET" \
+  --runtime-port "$RUNTIME_PORT" \
+  --trace-port "$TRACE_PORT" \
+  >/tmp/agentInjectionIII-smoke.log 2>&1 &
 DAEMON_PID=$!
 
 cleanup() {
