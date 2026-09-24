@@ -25,6 +25,28 @@ jobs:
       - name: Test
         run: swift test
 
+  mcp:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: mcp-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install MCP dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check MCP server syntax
+        run: npm run check
+
+      - name: Test MCP socket transport
+        run: npm test
 
   simulator-smoke:
     needs: swift
