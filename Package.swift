@@ -23,6 +23,10 @@ let package = Package(
         .executable(
             name: "injectionctl",
             targets: ["injectionctl"]
+        ),
+        .executable(
+            name: "agent-injection-menu",
+            targets: ["AgentInjectionMenu"]
         )
     ],
     dependencies: [
@@ -64,6 +68,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "injectionctl",
+            dependencies: ["AgentInjectionCore"]
+        ),
+        .executableTarget(
+            name: "AgentInjectionMenu",
             dependencies: ["AgentInjectionCore"]
         ),
         .testTarget(
