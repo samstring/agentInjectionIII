@@ -2377,16 +2377,28 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                     message: "Bazel aquery compiler provider is active; Xcode .xcactivitylog files are optional."
                 )
             )
+        } else if compilerDiagnostics.buildLogCount > 0 {
+            checks.append(
+                DoctorCheck(
+                    name: "build_logs",
+                    state: .pass,
+                    message: "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
+                )
+            )
+        } else if buildSystem == "intercepted+xcode" {
+            checks.append(
+                DoctorCheck(
+                    name: "build_logs",
+                    state: .warning,
+                    message: "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot), but intercepted Swift compiler contexts are available. Injection can proceed; build-log fallback is unavailable."
+                )
+            )
         } else {
             checks.append(
                 DoctorCheck(
                     name: "build_logs",
-                    state: compilerDiagnostics.buildLogCount > 0
-                        ? .pass
-                        : .fail,
-                    message: compilerDiagnostics.buildLogCount > 0
-                        ? "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
-                        : "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
+                    state: .fail,
+                    message: "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
                 )
             )
         }
