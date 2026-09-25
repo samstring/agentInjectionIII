@@ -362,7 +362,7 @@ rm -rf "$APP/Frameworks/SmokeFeature.framework"
 
 echo "==> Start injectiond"
 cd "$REPO_ROOT"
-"$DAEMON" \
+AGENT_INJECTION_KEEP_ARTIFACTS=1 "$DAEMON" \
   --socket "$SOCKET" \
   --project "$SMOKE_DIR" \
   --derived-data "$DERIVED" \
@@ -388,6 +388,7 @@ fi
 echo "==> Install and launch mixed ObjC/Swift/CocoaPods app"
 xcrun simctl uninstall "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$UDID" "$APP"
+SIMCTL_CHILD_INJECTION_DETAIL=1 \
 xcrun simctl launch "$UDID" "$BUNDLE_ID"
 
 echo "==> Wait for Injection runtime handshake"
@@ -491,6 +492,29 @@ if [ "$FEATURE_INJECT_STATUS" != "0" ]; then
 fi
 json_assert_injected "$FEATURE_INJECT_JSON"
 assert_no_standalone_watcher "$FEATURE_INJECT_JSON"
+
+echo "==> Capture framework/rebind symbol diagnostics"
+{
+  echo "=== SmokeFeature.framework symbols ==="
+  /usr/bin/nm -gjU "$FEATURE_FRAMEWORK/SmokeFeature" 2>&1 || true
+  echo
+  echo "=== App debug dylib SmokeFeature references ==="
+  /usr/bin/nm -gjU "$APP/SimulatorSmokeApp.debug.dylib" 2>&1 |
+    grep -E 'SmokeFeature|smokeFeature' || true
+  echo
+  echo "=== App debug dylib dependencies ==="
+  /usr/bin/otool -L "$APP/SimulatorSmokeApp.debug.dylib" 2>&1 || true
+  echo
+  echo "=== Preserved injection dylibs ==="
+  find /tmp/agentInjectionIII -maxdepth 1 -name '*.dylib' -print 2>/dev/null |
+    sort || true
+  for dylib in /tmp/agentInjectionIII/*.dylib; do
+    [ -f "$dylib" ] || continue
+    echo "--- $dylib ---"
+    /usr/bin/nm -gjU "$dylib" 2>&1 |
+      grep -E 'SmokeFeature|smokeFeature' || true
+  done
+} > "$ARTIFACTS/feature-symbols.txt"
 
 echo "==> Verify feature framework changed without rebuild/relaunch"
 wait_for_marker "FEATURE_AFTER" "$FEATURE_MARKER"
