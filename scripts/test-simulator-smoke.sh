@@ -170,6 +170,16 @@ raise SystemExit(0 if ok else 1)
 PY
 }
 
+assert_no_standalone_watcher() {
+  output_path="$1"
+  if grep -q "InjectionLite: Watching for source changes" "$output_path"; then
+    echo "Unexpected InjectionLite standalone watcher in Agent mode." >&2
+    cat "$output_path" >&2 || true
+    cat "$DAEMON_LOG" >&2 || true
+    return 1
+  fi
+}
+
 wait_for_marker() {
   expected="$1"
   marker="$2"
@@ -421,8 +431,17 @@ path.write_text(text.replace(old, new, 1))
 PY
 
 echo "==> Inject changed Swift source"
+set +e
 "$CTL" --socket "$SOCKET" inject "$SOURCE" | tee "$INJECT_JSON"
+INJECT_STATUS=${PIPESTATUS[0]}
+set -e
+if [ "$INJECT_STATUS" != "0" ]; then
+  echo "Primary Swift injection command failed." >&2
+  cat "$DAEMON_LOG" >&2 2>/dev/null || true
+  exit "$INJECT_STATUS"
+fi
 json_assert_injected "$INJECT_JSON"
+assert_no_standalone_watcher "$INJECT_JSON"
 
 echo "==> Verify running app changed without rebuild/relaunch: AFTER"
 wait_for_marker "AFTER" "$MARKER"
@@ -441,9 +460,18 @@ path.write_text(text.replace(old, new, 1))
 PY
 
 echo "==> Inject Swift source from second xcodeproj"
+set +e
 "$CTL" --socket "$SOCKET" inject "$FEATURE_SOURCE" |
   tee "$FEATURE_INJECT_JSON"
+FEATURE_INJECT_STATUS=${PIPESTATUS[0]}
+set -e
+if [ "$FEATURE_INJECT_STATUS" != "0" ]; then
+  echo "Second-project Swift injection command failed." >&2
+  cat "$DAEMON_LOG" >&2 2>/dev/null || true
+  exit "$FEATURE_INJECT_STATUS"
+fi
 json_assert_injected "$FEATURE_INJECT_JSON"
+assert_no_standalone_watcher "$FEATURE_INJECT_JSON"
 
 echo "==> Verify feature framework changed without rebuild/relaunch"
 wait_for_marker "FEATURE_AFTER" "$FEATURE_MARKER"
