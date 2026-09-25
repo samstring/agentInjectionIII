@@ -1,56 +1,74 @@
-# Objective-C + Swift multi-project hot-reload plan
+# ObjC + Swift 多工程热重载工作入口
 
-Branch: `feature/objc-swift-hot-reload`
+分支：`feature/objc-swift-hot-reload`
 
-## Goal
+本文件作为本分支文档入口。详细内容拆分为：
 
-Make Swift hot reload reliable in large Xcode workspaces containing Objective-C,
-Swift, CocoaPods, multiple projects, multiple targets, and many Swift sources,
-without adding configuration for normal single-project apps.
+- [需求文档](./objc-swift-hot-reload-requirements.md)
+  - 为什么要做
+  - 支持范围
+  - 兼容性要求
+  - diagnostics / cache / batch Swift 要求
+  - E2E 验收标准
 
-## Compatibility rule
+- [技术设计文档](./objc-swift-hot-reload-architecture.md)
+  - Agent -> daemon -> compiler -> runtime 架构
+  - compile context 模型
+  - compiler command discovery / selection
+  - Swift batch rewrite
+  - activity-log parser
+  - cache retry
+  - dynamic Framework / interposable
+  - diagnostics 与测试架构
 
-- A source with one valid compile context keeps the current zero-config behavior.
-- Extra target/module/architecture selection is only used when multiple contexts exist.
-- Ambiguous contexts must fail with a useful diagnostic instead of reporting a false success.
-- Existing Objective-C and simple Swift injection paths remain valid.
+- [实现文档](./objc-swift-hot-reload-implementation.md)
+  - 当前代码文件映射
+  - 已实现能力
+  - 已解决问题
+  - 当前 CI blocker
+  - 尚未完成的多工程 Framework E2E
+  - 后续实现顺序
 
-## Work items
+## 当前目标
 
-1. **Compile-context identity**
-   - Track source, platform, architecture, target triple, module and build-log origin.
-   - Keep compatibility with the existing persistent cache.
-   - Avoid treating commands for different architectures/modules as the same entry.
+```text
+Workspace
+├── App.xcodeproj
+│   ├── Objective-C
+│   └── Swift
+└── FeatureProject.xcodeproj
+    └── SmokeFeature.framework
+        ├── SmokeFeature.swift
+        └── many Swift sources
 
-2. **Candidate selection**
-   - Collect all matching Xcode compile commands instead of returning the first match.
-   - Prefer the connected runtime architecture.
-   - Collapse repeated logs for the same compile context.
-   - If multiple distinct contexts remain, report an ambiguity rather than guessing.
+FEATURE_BEFORE
+   -> edit
+   -> explicit inject
+FEATURE_AFTER
+```
 
-3. **Diagnostics**
-   - Extend `doctor SOURCE` with candidate count, modules, architectures and ambiguity.
-   - Make stale/wrong-architecture contexts visible to an Agent.
+要求：
 
-4. **Compiler interception**
-   - Cover Xcode 26.3+ driver behavior where `swiftc` can bypass a
-     `swift-frontend` wrapper.
-   - Preserve normal driver invocation semantics and build-log fallback.
+- 不 rebuild App
+- 不 reinstall App
+- 不 relaunch App
+- 单工程保持零额外配置
+- 多工程发生歧义时不允许猜测
+- 保存源码只进入 pending，不自动注入
 
-5. **Tests**
-   - Single-project/single-candidate behavior remains unchanged.
-   - Multiple logs for the same module collapse to one context.
-   - arm64 runtime does not select an x86_64 compile command.
-   - Multiple modules for one source are detected as ambiguous.
-   - Compiler interception patch/unpatch remains reversible.
+## 完成标准
 
-6. **Simulator E2E**
-   - Keep the existing mixed Objective-C + Swift + CocoaPods smoke test.
-   - Add a multi-project fixture with Swift code outside the app project.
-   - Verify behavior changes in the running app, not just `injected=true`.
+```text
+swift build                       ✅
+swift test                        ✅
+MCP                               ✅
+InjectionIII compatibility        ✅
+Menu App                          ✅
+ObjC + Swift + CocoaPods          ✅
+App Swift BEFORE -> AFTER         ✅
+Large Swift target                ✅
+Multi-project Swift Framework     ✅
+FEATURE_BEFORE -> FEATURE_AFTER   ✅
+```
 
-## Definition of done
-
-`swift build`, `swift test`, MCP checks and Simulator smoke are green on the
-feature branch, and a multi-project Swift edit is observed in the already
-running Simulator app without rebuilding or relaunching it.
+以上全部通过后，本分支才算完成。
