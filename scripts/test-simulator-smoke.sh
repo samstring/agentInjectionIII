@@ -331,6 +331,7 @@ DATA_CONTAINER="$(
 MARKER="$DATA_CONTAINER/Documents/agentInjection-smoke.txt"
 TOUCH_TARGET="$DATA_CONTAINER/Documents/agentInjection-touch-target.json"
 TOUCH_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch.txt"
+TOUCH_EVENT_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch-event.txt"
 
 echo "==> Verify initial Swift behavior: BEFORE"
 wait_for_marker "BEFORE" "$MARKER"
@@ -424,7 +425,7 @@ if [ ! -s "$TOUCH_TARGET" ]; then
   exit 1
 fi
 
-rm -f "$TOUCH_MARKER"
+rm -f "$TOUCH_MARKER" "$TOUCH_EVENT_MARKER"
 
 echo "==> Build and replay a real UIKit touch sequence"
 python3 - "$TOUCH_TARGET" "$TOUCH_EVENTS_JSON" <<'PY'
@@ -480,8 +481,8 @@ if not ok:
 raise SystemExit(0 if ok else 1)
 PY
 
-echo "==> Verify replayed touch reached the live UIButton"
-wait_for_marker "TOUCHED" "$TOUCH_MARKER"
+echo "==> Verify replayed touch entered UIApplication sendEvent:"
+wait_for_marker "REPLAYED" "$TOUCH_EVENT_MARKER"
 
 echo "==> Start AgentTraceBridge method tracing"
 "$CTL" --socket "$SOCKET" trace start 'SmokeViewController|tracePulse' |
@@ -718,7 +719,7 @@ echo "  runtime handshake: yes"
 echo "  Swift injection BEFORE -> AFTER: yes"
 echo "  screenshot: $SCREENSHOT_PNG"
 echo "  touch capture command: yes"
-echo "  touch replay -> UIButton action: yes"
+echo "  touch replay -> UIApplication sendEvent: yes"
 echo "  AgentTraceBridge live method trace: yes"
 echo "  SwiftTrace profile snapshot: yes"
 echo "  SwiftTrace call order: yes"

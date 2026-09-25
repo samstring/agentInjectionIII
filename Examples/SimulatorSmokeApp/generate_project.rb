@@ -19,13 +19,15 @@ sources = project.main_group.new_group('Sources', 'Sources')
   main.m
   AppDelegate.h
   AppDelegate.m
+  SmokeApplication.h
+  SmokeApplication.m
   SmokeObjCHelper.h
   SmokeObjCHelper.m
   SimulatorSmokeApp-Bridging-Header.h
   SmokeViewController.swift
 ].each do |name|
   ref = sources.new_file(name)
-  if %w[main.m AppDelegate.m SmokeObjCHelper.m SmokeViewController.swift].include?(name)
+  if %w[main.m AppDelegate.m SmokeApplication.m SmokeObjCHelper.m SmokeViewController.swift].include?(name)
     target.source_build_phase.add_file_reference(ref)
   end
 end
