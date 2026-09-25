@@ -909,7 +909,10 @@ public final class InjectionNextRuntimeServer {
         self.logStore = logStore
         self.selectedXcodePath = xcodePath
         self.discovery = devicesEnabled
-            ? InjectionDeviceDiscovery(port: port)
+            ? InjectionDeviceDiscovery(
+                port: port,
+                logStore: logStore
+            )
             : nil
     }
 
@@ -976,6 +979,10 @@ public final class InjectionNextRuntimeServer {
         }
 
         listenerFD = fd
+
+        logStore.append(
+            "Runtime listener started on \(devicesEnabled ? "0.0.0.0" : "127.0.0.1"):\(port)."
+        )
 
         if devicesEnabled {
             try discovery?.start()

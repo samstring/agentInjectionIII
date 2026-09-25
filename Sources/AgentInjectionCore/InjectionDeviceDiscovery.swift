@@ -15,16 +15,19 @@ public final class InjectionDeviceDiscovery {
         qos: .utility
     )
     private let expectedHash: Int32
+    private let logStore: AgentLogStore?
     private var socketFD: Int32 = -1
 
     public init(
         port: UInt16 = 8887,
-        injectionKey: String = NSHomeDirectory()
+        injectionKey: String = NSHomeDirectory(),
+        logStore: AgentLogStore? = nil
     ) {
         self.port = port
         self.expectedHash = Self.multicastHash(
             injectionKey
         )
+        self.logStore = logStore
     }
 
     deinit {
@@ -91,6 +94,9 @@ public final class InjectionDeviceDiscovery {
         }
 
         socketFD = fd
+        logStore?.append(
+            "Device discovery listener started on UDP 0.0.0.0:\(port)."
+        )
         queue.async { [weak self] in
             self?.serve()
         }
@@ -164,8 +170,16 @@ public final class InjectionDeviceDiscovery {
 
             guard version == 1,
                   hash == expectedHash else {
+                logStore?.append(
+                    "Device discovery packet rejected (version=\(version), keyMatch=\(hash == expectedHash)).",
+                    level: "detail"
+                )
                 continue
             }
+
+            logStore?.append(
+                "Device discovery packet matched; replying with host identity."
+            )
 
             let response = Self.makePacket(
                 version: 1,

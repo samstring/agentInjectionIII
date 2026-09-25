@@ -9,6 +9,7 @@ import Darwin
 public final class AgentTraceServer {
     public let port: UInt16
     private let devicesEnabled: Bool
+    private let logStore: AgentLogStore?
 
     private let queue = DispatchQueue(
         label: "agentInjectionIII.trace-server",
@@ -37,10 +38,12 @@ public final class AgentTraceServer {
 
     public init(
         port: UInt16 = 8888,
-        devicesEnabled: Bool = false
+        devicesEnabled: Bool = false,
+        logStore: AgentLogStore? = nil
     ) {
         self.port = port
         self.devicesEnabled = devicesEnabled
+        self.logStore = logStore
     }
 
     deinit {
@@ -121,6 +124,10 @@ public final class AgentTraceServer {
         }
 
         listenerFD = fd
+
+        logStore?.append(
+            "Trace listener started on \(devicesEnabled ? "0.0.0.0" : "127.0.0.1"):\(port)."
+        )
 
         queue.async { [weak self] in
             self?.acceptLoop()
@@ -1108,16 +1115,28 @@ public final class AgentTraceServer {
             )
 
             guard bridge.validateHello() else {
+                logStore?.append(
+                    "Rejected trace bridge connection: invalid or unsupported hello.",
+                    level: "warning"
+                )
                 continue
             }
 
             lock.lock()
             guard client == nil else {
                 lock.unlock()
+                logStore?.append(
+                    "Rejected trace bridge connection: another bridge is already active.",
+                    level: "warning"
+                )
                 continue
             }
             client = bridge
             lock.unlock()
+
+            logStore?.append(
+                "Trace bridge connected."
+            )
 
             queue.async { [weak self, weak bridge] in
                 guard let self, let bridge else { return }
@@ -1159,6 +1178,10 @@ public final class AgentTraceServer {
                         eval.semaphore.signal()
                     }
                     self.lifetimeActive = false
+                    self.logStore?.append(
+                        "Trace bridge disconnected.",
+                        level: "warning"
+                    )
                 }
                 self.lock.unlock()
             }

@@ -137,9 +137,11 @@ private func fatalUsage(_ message: String) -> Never {
 }
 
 let options = parseOptions()
+let logStore = AgentLogStore()
 let runtimeServer = InjectionNextRuntimeServer(
     port: options.runtimePort,
     devicesEnabled: options.enableDevices,
+    logStore: logStore,
     xcodePath: options.xcodePath
 )
 
@@ -152,7 +154,8 @@ do {
 
 let traceServer = AgentTraceServer(
     port: options.tracePort,
-    devicesEnabled: options.enableDevices
+    devicesEnabled: options.enableDevices,
+    logStore: logStore
 )
 
 do {
