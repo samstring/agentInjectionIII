@@ -581,4 +581,137 @@ final class BuildLogCompilerTests: XCTestCase {
         XCTAssertTrue(rewritten.contains(" -filelist /tmp/sources.txt"))
     }
 
+
+    func testMissingProductHeaderVFSOverlayIsRemoved() {
+        let compiler = BuildLogCompiler()
+        let missing =
+            "/tmp/SmokeFeature-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-VFS-iphonesimulator/all-product-headers.yaml"
+        let command = [
+            "/usr/bin/swift-frontend",
+            "-frontend",
+            "-c",
+            "/tmp/Foo.swift",
+            "-Xcc", "-ivfsoverlay",
+            "-Xcc", missing,
+            "-target", "arm64-apple-ios18.0-simulator"
+        ].joined(separator: " ")
+
+        let rewritten = compiler.rewriteMissingVFSOverlays(
+            in: command
+        )
+
+        XCTAssertFalse(
+            rewritten.contains(missing),
+            rewritten
+        )
+        XCTAssertFalse(
+            rewritten.contains("-ivfsoverlay"),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains(
+                "-target arm64-apple-ios18.0-simulator"
+            ),
+            rewritten
+        )
+    }
+
+    func testExistingVFSOverlayIsPreserved() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-vfs-existing-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        let overlay = root.appendingPathComponent(
+            "all-product-headers.yaml"
+        )
+        try "{}\n".write(
+            to: overlay,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler()
+        let command =
+            "/usr/bin/swift-frontend -frontend -c /tmp/Foo.swift -Xcc -ivfsoverlay -Xcc \(overlay.path)"
+
+        let rewritten = compiler.rewriteMissingVFSOverlays(
+            in: command
+        )
+
+        XCTAssertTrue(
+            rewritten.contains(overlay.path),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains("-ivfsoverlay"),
+            rewritten
+        )
+    }
+
+    func testMissingVFSOverlayRecoversSiblingForSameTarget() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-vfs-recovery-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let config = root
+            .appendingPathComponent("SmokeFeature.build")
+            .appendingPathComponent("Debug-iphonesimulator")
+        let stale = config.appendingPathComponent(
+            "SmokeFeature-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-VFS-iphonesimulator"
+        )
+        let current = config.appendingPathComponent(
+            "SmokeFeature-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-VFS-iphonesimulator"
+        )
+        try FileManager.default.createDirectory(
+            at: current,
+            withIntermediateDirectories: true
+        )
+
+        let recovered = current.appendingPathComponent(
+            "all-product-headers.yaml"
+        )
+        try "{}\n".write(
+            to: recovered,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let missing = stale.appendingPathComponent(
+            "all-product-headers.yaml"
+        ).path
+
+        let compiler = BuildLogCompiler()
+        let command =
+            "/usr/bin/swift-frontend -frontend -c /tmp/Foo.swift -Xcc -ivfsoverlay -Xcc \(missing)"
+
+        let rewritten = compiler.rewriteMissingVFSOverlays(
+            in: command
+        )
+
+        XCTAssertFalse(
+            rewritten.contains(missing),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains(recovered.path),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains("-ivfsoverlay"),
+            rewritten
+        )
+    }
+
 }
