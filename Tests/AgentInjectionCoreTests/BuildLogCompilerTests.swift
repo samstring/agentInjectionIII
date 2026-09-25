@@ -262,4 +262,185 @@ final class BuildLogCompilerTests: XCTestCase {
         )
     }
 
+
+    func testDiagnosticsSelectsRuntimeArchitectureAcrossMultipleCommands() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-context-arch-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+
+        let source = root.appendingPathComponent("Feature.swift")
+        try "struct Feature {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let log = root.appendingPathComponent(
+            "frontend-commands.log"
+        )
+        let sdk =
+            "/Applications/Xcode.app/Contents/Developer/Platforms/" +
+            "iPhoneSimulator.platform/Developer/SDKs/" +
+            "iPhoneSimulator26.0.sdk"
+
+        let commands = [
+            "x86_64-apple-ios18.0-simulator",
+            "arm64-apple-ios18.0-simulator"
+        ].map { triple in
+            root.path + "\t" + [
+                "/Applications/Xcode.app/Contents/Developer/" +
+                    "Toolchains/XcodeDefault.xctoolchain/usr/bin/" +
+                    "swift-frontend.save",
+                "-frontend",
+                "-c",
+                "-primary-file", source.path,
+                "-target", triple,
+                "-sdk", sdk,
+                "-module-name", "FeatureModule",
+                "-D", "DEBUG"
+            ].joined(separator: " ")
+        }.joined(separator: "\n") + "\n"
+
+        try commands.write(
+            to: log,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path,
+            interceptionLogPath: log.path
+        )
+
+        let diagnostics = compiler.diagnostics(
+            source: source.path,
+            platform: "iPhoneSimulator",
+            arch: "arm64"
+        )
+
+        XCTAssertEqual(
+            diagnostics.compileCommandFound,
+            true
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandCandidateCount,
+            2
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandArchitectures,
+            ["arm64", "x86_64"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandModules,
+            ["FeatureModule"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandAmbiguous,
+            false
+        )
+    }
+
+    func testDiagnosticsRejectsAmbiguousModulesForSameSwiftSource() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-context-module-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+
+        let source = root.appendingPathComponent("Shared.swift")
+        try "struct Shared {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let log = root.appendingPathComponent(
+            "frontend-commands.log"
+        )
+        let sdk =
+            "/Applications/Xcode.app/Contents/Developer/Platforms/" +
+            "iPhoneSimulator.platform/Developer/SDKs/" +
+            "iPhoneSimulator26.0.sdk"
+
+        let commands = [
+            "FeatureA",
+            "FeatureB"
+        ].map { module in
+            root.path + "\t" + [
+                "/Applications/Xcode.app/Contents/Developer/" +
+                    "Toolchains/XcodeDefault.xctoolchain/usr/bin/" +
+                    "swift-frontend.save",
+                "-frontend",
+                "-c",
+                "-primary-file", source.path,
+                "-target", "arm64-apple-ios18.0-simulator",
+                "-sdk", sdk,
+                "-module-name", module,
+                "-D", "DEBUG"
+            ].joined(separator: " ")
+        }.joined(separator: "\n") + "\n"
+
+        try commands.write(
+            to: log,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path,
+            interceptionLogPath: log.path
+        )
+
+        let diagnostics = compiler.diagnostics(
+            source: source.path,
+            platform: "iPhoneSimulator",
+            arch: "arm64"
+        )
+
+        XCTAssertEqual(
+            diagnostics.compileCommandFound,
+            false
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandCandidateCount,
+            2
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandModules,
+            ["FeatureA", "FeatureB"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandArchitectures,
+            ["arm64"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandAmbiguous,
+            true
+        )
+    }
+
 }
