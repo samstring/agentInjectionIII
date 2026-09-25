@@ -926,58 +926,202 @@ public final class BuildLogCompiler {
         source: String,
         activityLogPath: String
     ) -> Result<PreparedCompileCommand, ControlError> {
-        guard source.hasSuffix(".swift"),
-              let token = firstRegexCapture(
+        var preparedCommand = command
+        var temporaryFiles: [String] = []
+
+        if source.hasSuffix(".swift"),
+           let token = firstRegexCapture(
                 " -filelist (\(quotedArgumentRegex))",
-                in: command
-              ) else {
-            return .success(
-                PreparedCompileCommand(
-                    command: command,
-                    temporaryFiles: []
+                in: preparedCommand
+           ) {
+            let originalFileList = decodeShellToken(token)
+
+            if !originalFileList.isEmpty,
+               !fileManager.fileExists(atPath: originalFileList) {
+                guard activityLogPath.hasSuffix(".xcactivitylog"),
+                      let recovered = recoverFileList(
+                        source: source,
+                        activityLogPath: activityLogPath
+                      ) else {
+                    return .failure(
+                        ControlError(
+                            code: "FILELIST_MISSING",
+                            message: """
+                            Swift compiler file list no longer exists: \(originalFileList). Rebuild the app in Xcode, then retry injection. EMIT_FRONTEND_COMMAND_LINES=YES is recommended for Debug.
+                            """
+                        )
+                    )
+                }
+
+                preparedCommand = replacingRegex(
+                    " -filelist \(quotedArgumentRegex)",
+                    in: preparedCommand,
+                    with: " -filelist \(shellQuote(recovered))"
                 )
-            )
+                temporaryFiles.append(recovered)
+            }
         }
 
-        let originalFileList = decodeShellToken(token)
-        guard !originalFileList.isEmpty,
-              !fileManager.fileExists(atPath: originalFileList) else {
-            return .success(
-                PreparedCompileCommand(
-                    command: command,
-                    temporaryFiles: []
-                )
-            )
-        }
-
-        guard activityLogPath.hasSuffix(".xcactivitylog"),
-              let recovered = recoverFileList(
-                source: source,
-                activityLogPath: activityLogPath
-              ) else {
-            return .failure(
-                ControlError(
-                    code: "FILELIST_MISSING",
-                    message: """
-                    Swift compiler file list no longer exists: \(originalFileList).                     Rebuild the app in Xcode, then retry injection.                     EMIT_FRONTEND_COMMAND_LINES=YES is recommended for Debug.
-                    """
-                )
-            )
-        }
-
-        let replacement = " -filelist \(shellQuote(recovered))"
-        let rewritten = replacingRegex(
-            " -filelist \(quotedArgumentRegex)",
-            in: command,
-            with: replacement
+        preparedCommand = rewriteMissingVFSOverlays(
+            in: preparedCommand
         )
 
         return .success(
             PreparedCompileCommand(
-                command: rewritten,
-                temporaryFiles: [recovered]
+                command: preparedCommand,
+                temporaryFiles: temporaryFiles
             )
         )
+    }
+
+    func rewriteMissingVFSOverlays(
+        in command: String
+    ) -> String {
+        let pattern =
+            " -Xcc -ivfsoverlay -Xcc (\(quotedArgumentRegex))"
+
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern
+        ) else {
+            return command
+        }
+
+        var rewritten = command
+        let matches = regex.matches(
+            in: command,
+            range: NSRange(
+                command.startIndex..<command.endIndex,
+                in: command
+            )
+        )
+
+        for match in matches.reversed() {
+            guard match.numberOfRanges > 1,
+                  let fullRange = Range(
+                    match.range(at: 0),
+                    in: rewritten
+                  ),
+                  let tokenRange = Range(
+                    match.range(at: 1),
+                    in: rewritten
+                  )
+            else {
+                continue
+            }
+
+            let token = String(rewritten[tokenRange])
+            let overlay = decodeShellToken(token)
+            guard !overlay.isEmpty,
+                  !fileManager.fileExists(atPath: overlay)
+            else {
+                continue
+            }
+
+            if let recovered = recoverVFSOverlay(
+                missing: overlay
+            ) {
+                rewritten.replaceSubrange(
+                    tokenRange,
+                    with: shellQuote(recovered)
+                )
+                continue
+            }
+
+            // Xcode may delete the generated product-header overlay when a
+            // different project/scheme reuses the same DerivedData. The
+            // compiler otherwise fails before it can discover whether that
+            // overlay is actually needed by this Swift source. Header maps
+            // and the remaining search paths stay intact.
+            guard URL(
+                fileURLWithPath: overlay
+            ).lastPathComponent == "all-product-headers.yaml"
+            else {
+                continue
+            }
+
+            rewritten.removeSubrange(fullRange)
+        }
+
+        return rewritten
+    }
+
+    private func recoverVFSOverlay(
+        missing: String
+    ) -> String? {
+        let missingURL = URL(fileURLWithPath: missing)
+        let vfsDirectory = missingURL.deletingLastPathComponent()
+        let configurationDirectory =
+            vfsDirectory.deletingLastPathComponent()
+        let directoryName = vfsDirectory.lastPathComponent
+
+        guard let vfsRange = directoryName.range(
+            of: "-VFS-",
+            options: .backwards
+        ) else {
+            return nil
+        }
+
+        let beforeVFS = String(
+            directoryName[..<vfsRange.lowerBound]
+        )
+        let vfsSuffix = String(
+            directoryName[vfsRange.lowerBound...]
+        )
+
+        guard let hashSeparator = beforeVFS.lastIndex(
+            of: "-"
+        ) else {
+            return nil
+        }
+
+        let targetPrefix = String(
+            beforeVFS[..<hashSeparator]
+        ) + "-"
+
+        guard let directories =
+                try? fileManager.contentsOfDirectory(
+                    at: configurationDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+        else {
+            return nil
+        }
+
+        let candidates = directories.compactMap { directory
+            -> URL? in
+            let name = directory.lastPathComponent
+            guard name.hasPrefix(targetPrefix),
+                  name.hasSuffix(vfsSuffix),
+                  directory.path != vfsDirectory.path
+            else {
+                return nil
+            }
+
+            let candidate = directory.appendingPathComponent(
+                missingURL.lastPathComponent
+            )
+            return fileManager.fileExists(
+                atPath: candidate.path
+            ) ? candidate : nil
+        }
+
+        return candidates
+            .sorted {
+                let left = (
+                    try? $0.resourceValues(
+                        forKeys: [.contentModificationDateKey]
+                    ).contentModificationDate
+                ) ?? .distantPast
+                let right = (
+                    try? $1.resourceValues(
+                        forKeys: [.contentModificationDateKey]
+                    ).contentModificationDate
+                ) ?? .distantPast
+                return left > right
+            }
+            .first?
+            .path
     }
 
     private func recoverFileList(
