@@ -4,6 +4,27 @@ import Darwin
 @testable import AgentInjectionCore
 
 final class AgentTraceServerTests: XCTestCase {
+    func testDeviceEnabledTraceServerAcceptsLANConnection() throws {
+        guard let host = Self.nonLoopbackIPv4Address() else {
+            throw XCTSkip("No active non-loopback IPv4 interface is available.")
+        }
+
+        let port = UInt16(
+            19_000 + Int(getpid()) % 1_000
+        )
+        let server = AgentTraceServer(
+            port: port,
+            devicesEnabled: true
+        )
+        try server.start()
+
+        let fd = try Self.connect(
+            port: port,
+            host: host
+        )
+        Darwin.close(fd)
+    }
+
     func testInjectedXCTestResultIsBuffered() throws {
         let port = UInt16(
             19_000 + Int(getpid()) % 1_000
@@ -86,8 +107,34 @@ final class AgentTraceServerTests: XCTestCase {
         XCTAssertTrue(cleared.results.isEmpty)
     }
 
+    private static func nonLoopbackIPv4Address() -> String? {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0,
+              let first = interfaces else {
+            return nil
+        }
+        defer { freeifaddrs(first) }
+
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let interface = current {
+            let flags = interface.pointee.ifa_flags
+            if let address = interface.pointee.ifa_addr,
+               address.pointee.sa_family == sa_family_t(AF_INET),
+               flags & UInt32(IFF_UP) != 0,
+               flags & UInt32(IFF_LOOPBACK) == 0 {
+                let ipv4 = UnsafeRawPointer(address)
+                    .assumingMemoryBound(to: sockaddr_in.self)
+                    .pointee.sin_addr
+                return String(cString: inet_ntoa(ipv4))
+            }
+            current = interface.pointee.ifa_next
+        }
+        return nil
+    }
+
     private static func connect(
-        port: UInt16
+        port: UInt16,
+        host: String = "127.0.0.1"
     ) throws -> Int32 {
         var lastError = "unknown"
 
@@ -114,7 +161,7 @@ final class AgentTraceServerTests: XCTestCase {
                 port.bigEndian
             address.sin_addr = in_addr(
                 s_addr:
-                    inet_addr("127.0.0.1")
+                    inet_addr(host)
             )
 
             let result =

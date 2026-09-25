@@ -8,6 +8,7 @@ import Darwin
 /// connects to this server and forwards SwiftTrace.logOutput as JSON lines.
 public final class AgentTraceServer {
     public let port: UInt16
+    private let devicesEnabled: Bool
 
     private let queue = DispatchQueue(
         label: "agentInjectionIII.trace-server",
@@ -34,8 +35,12 @@ public final class AgentTraceServer {
     private let maximumBufferedEvents = 10_000
     private let maximumBufferedTestResults = 1_000
 
-    public init(port: UInt16 = 8888) {
+    public init(
+        port: UInt16 = 8888,
+        devicesEnabled: Bool = false
+    ) {
         self.port = port
+        self.devicesEnabled = devicesEnabled
     }
 
     deinit {
@@ -80,7 +85,9 @@ public final class AgentTraceServer {
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = port.bigEndian
         address.sin_addr = in_addr(
-            s_addr: inet_addr("127.0.0.1")
+            s_addr: devicesEnabled
+                ? UInt32(INADDR_ANY).bigEndian
+                : inet_addr("127.0.0.1")
         )
 
         let bindResult = withUnsafePointer(to: &address) {
@@ -98,9 +105,10 @@ public final class AgentTraceServer {
 
         guard bindResult == 0 else {
             Darwin.close(fd)
+            let host = devicesEnabled ? "0.0.0.0" : "127.0.0.1"
             throw ControlError(
                 code: "TRACE_BIND_FAILED",
-                message: "Unable to bind 127.0.0.1:\(port): \(String(cString: strerror(errno)))"
+                message: "Unable to bind \(host):\(port): \(String(cString: strerror(errno)))"
             )
         }
 

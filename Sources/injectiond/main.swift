@@ -120,7 +120,7 @@ private func printUsage() {
                           Default: 8888
       --derived-data PATH Override Xcode DerivedData root used for build-log discovery.
       --xcode-path PATH   Xcode.app to use instead of xcode-select.
-      --enable-devices    Listen on all interfaces and answer InjectionNext device discovery.
+      --enable-devices    Listen on all interfaces for device injection and trace.
       --codesign-identity IDENTITY
                           Expanded Apple code signing identity used for physical-device dylibs.
       --device-testing    Link XCTest/Swift Testing support into device injection dylibs.
@@ -151,7 +151,8 @@ do {
 }
 
 let traceServer = AgentTraceServer(
-    port: options.tracePort
+    port: options.tracePort,
+    devicesEnabled: options.enableDevices
 )
 
 do {
@@ -184,7 +185,7 @@ fputs(
     "agentInjectionIII injectiond \(ControlRouter.daemonVersion)\n" +
     "  control: \(options.socketPath)\n" +
     "  runtime: \(options.enableDevices ? "0.0.0.0" : "127.0.0.1"):\(options.runtimePort)\n" +
-    "  trace:   127.0.0.1:\(options.tracePort)\n",
+    "  trace:   \(options.enableDevices ? "0.0.0.0" : "127.0.0.1"):\(options.tracePort)\n",
     stderr
 )
 
