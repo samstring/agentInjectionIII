@@ -25,6 +25,15 @@ jobs:
       - name: Test
         run: swift test
 
+      - name: Build clickable macOS app
+        run: bash scripts/build-macos-app.sh debug
+
+      - name: Validate app bundle
+        run: |
+          test -x dist/AgentInjectionIII.app/Contents/MacOS/AgentInjectionIII
+          test -x dist/AgentInjectionIII.app/Contents/Helpers/injectiond
+          plutil -lint dist/AgentInjectionIII.app/Contents/Info.plist
+
   mcp:
     runs-on: ubuntu-latest
 

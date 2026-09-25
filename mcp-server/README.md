@@ -1,4 +1,4 @@
-# agentInjectionIII MCP Server
+# AgentInjectionIII MCP Server
 
 This is a thin MCP adapter over the existing
 `injectiond` Unix-domain-socket control plane.
@@ -60,7 +60,7 @@ AI Agent
    |
    | MCP stdio
    v
-agentInjectionIII MCP
+AgentInjectionIII MCP
    |
    | newline-delimited JSON
    | Unix domain socket

@@ -2,7 +2,7 @@
 
 ## Goal
 
-agentInjectionIII should make its runtime state visible to both a developer and an AI agent.
+AgentInjectionIII should make its runtime state visible to both a developer and an AI agent.
 
 The feature has two user-facing outcomes:
 
@@ -14,7 +14,7 @@ The diagnostics surface is intentionally broader than networking. It covers daem
 ## Design principles
 
 - **One source of truth.** The menu bar, CLI, and MCP adapter all read the same Unix-domain-socket control plane exposed by injectiond.
-- **Do not duplicate injection logic in UI.** The menu app is an observer only.
+- **Keep injection logic in the daemon.** The menu app may own the daemon process lifecycle, but compilation, runtime transport, injection, tracing, and diagnostics remain in `injectiond`.
 - **Non-consuming diagnostics.** Troubleshooting history must still be available after a failure. The diagnostics API therefore snapshots logs/events without draining them.
 - **Backward compatibility.** Existing `logs`, `events`, `doctor`, `status`, and MCP tools remain available.
 - **Structured first, raw logs retained.** Agent diagnostics combine structured state with recent raw daemon/runtime messages.
@@ -23,12 +23,15 @@ The diagnostics surface is intentionally broader than networking. It covers daem
 ## Architecture
 
 ```text
-                         +-------------------+
-                         | macOS MenuBarExtra|
-                         +---------+---------+
-                                   |
-                                   | ControlRequest / Unix socket
-                                   v
+                         +----------------------+
+                         | AgentInjectionIII.app|
+                         | MenuBarExtra + daemon|
+                         | lifecycle management |
+                         +----------+-----------+
+                                    |
+                                    | starts injectiond --enable-devices
+                                    | ControlRequest / Unix socket
+                                    v
 Agent -> MCP server ----------> injectiond <---------- injectionctl
                                    |
                     +--------------+--------------+

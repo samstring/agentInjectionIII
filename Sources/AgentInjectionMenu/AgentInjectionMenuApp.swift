@@ -196,8 +196,6 @@ final class MenuStatusModel: ObservableObject {
 
                 DispatchQueue.main.async {
                     self?.diagnostics = diagnostics
-                    self?.daemonStatus =
-                        diagnostics.status
                     self?.connectionError = nil
                     self?.lastUpdated = Date()
                 }

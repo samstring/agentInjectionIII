@@ -1,4 +1,4 @@
-# agentInjectionIII
+# AgentInjectionIII
 
 Agent-first, headless code injection for iOS development.
 
@@ -79,6 +79,55 @@ There is no file watcher in the control path.
 
 The build-log compiler is intentionally focused on normal Xcode/CocoaPods projects first. Bazel remains a later build-system phase. The physical-device path exists experimentally but the Simulator remains the validated development path.
 
+## macOS app
+
+AgentInjectionIII is packaged as a clickable menu bar application. The app owns the normal desktop lifecycle:
+
+```text
+AgentInjectionIII.app
+        |
+        +--> starts/monitors injectiond --enable-devices
+        |
+        +--> menu bar status + diagnostics
+        |
+        +--> Unix socket shared by MCP / injectionctl
+        |
+        +--> iPhone runtime connects to injectiond over the local network
+```
+
+Build the app bundle:
+
+```bash
+bash scripts/build-macos-app.sh
+open dist/AgentInjectionIII.app
+```
+
+Or install it under `~/Applications`:
+
+```bash
+bash scripts/install-app.sh
+open ~/Applications/AgentInjectionIII.app
+```
+
+The app is a menu-bar-only app (`LSUIElement`) and bundles its own `injectiond` helper. When the daemon is not reachable, the app starts it automatically with `--enable-devices`. Quitting AgentInjectionIII stops the daemon instance that the app owns.
+
+For compatibility, existing state paths remain lowercase:
+
+```text
+/tmp/agentInjectionIII.sock
+~/.agentInjectionIII/
+```
+
+Optional environment overrides are still supported:
+
+```text
+AGENT_INJECTION_SOCKET
+AGENT_INJECTION_DAEMON
+AGENT_INJECTION_PROJECT_ROOT
+AGENT_INJECTION_DERIVED_DATA
+AGENT_INJECTION_XCODE_PATH
+```
+
 ## Build
 
 ```bash
@@ -153,7 +202,7 @@ Use:
 bash "${SRCROOT}/path/to/agentInjectionIII/scripts/embed-runtime.sh"
 ```
 
-If `~/.agentInjectionIII/runtime/iOSInjection.bundle` does not exist, the script is a no-op. Therefore teammates who have not installed agentInjectionIII are unaffected.
+If `~/.agentInjectionIII/runtime/iOSInjection.bundle` does not exist, the script is a no-op. Therefore teammates who have not installed AgentInjectionIII are unaffected.
 
 ### 3. Keep the existing Injection build settings
 
@@ -400,7 +449,7 @@ flowchart TD
 
 ## Why this works with CocoaPods
 
-agentInjectionIII does not reconstruct your project's compile flags from the Podfile.
+AgentInjectionIII does not reconstruct your project's compile flags from the Podfile.
 
 Instead it reuses the command Xcode already used, preserving things such as:
 
