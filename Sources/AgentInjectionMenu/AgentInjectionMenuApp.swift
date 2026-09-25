@@ -113,7 +113,9 @@ final class MenuStatusModel: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.shutdown()
+                Task { @MainActor in
+                    self?.shutdown()
+                }
             }
     }
 
@@ -133,6 +135,7 @@ final class MenuStatusModel: ObservableObject {
 
     func refreshStatus() {
         let socketPath = socketPath
+        let daemonController = daemonController
 
         worker.async { [weak self] in
             do {
@@ -159,7 +162,7 @@ final class MenuStatusModel: ObservableObject {
                     self?.lastUpdated = Date()
                 }
             } catch {
-                self?.daemonController.ensureRunning()
+                daemonController.ensureRunning()
 
                 DispatchQueue.main.async {
                     self?.daemonStatus = nil
@@ -173,6 +176,7 @@ final class MenuStatusModel: ObservableObject {
 
     func refreshDiagnostics() {
         let socketPath = socketPath
+        let daemonController = daemonController
 
         worker.async { [weak self] in
             do {
@@ -200,7 +204,7 @@ final class MenuStatusModel: ObservableObject {
                     self?.lastUpdated = Date()
                 }
             } catch {
-                self?.daemonController.ensureRunning()
+                daemonController.ensureRunning()
 
                 DispatchQueue.main.async {
                     self?.connectionError =
@@ -212,7 +216,8 @@ final class MenuStatusModel: ObservableObject {
     }
 }
 
-private final class DaemonController {
+private final class DaemonController:
+    @unchecked Sendable {
     private let socketPath: String
     private let queue = DispatchQueue(
         label: "AgentInjectionIII.daemon.lifecycle",
