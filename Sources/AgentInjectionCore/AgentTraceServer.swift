@@ -1636,6 +1636,21 @@ private final class TraceBridgeClient {
         )
 
         while true {
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                let line = Data(buffer[..<newline])
+                buffer.removeSubrange(...newline)
+
+                guard !line.isEmpty,
+                      let message = try? JSONDecoder().decode(
+                        TraceBridgeMessage.self,
+                        from: line
+                      ) else {
+                    continue
+                }
+
+                onEvent(message)
+            }
+
             let count = bytes.withUnsafeMutableBytes {
                 Darwin.read(
                     fd,
