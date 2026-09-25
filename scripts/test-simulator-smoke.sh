@@ -462,9 +462,14 @@ echo "==> Verify running app changed without rebuild/relaunch: AFTER"
 wait_for_marker "AFTER" "$MARKER"
 
 echo "==> Diagnose second-project compiler context after main injection"
+set +e
 "$CTL" --socket "$SOCKET" doctor "$FEATURE_SOURCE" |
   tee "$FEATURE_DOCTOR_AFTER_MAIN_JSON"
-cp "$HOME/.agentInjectionIII/cache/compile-commands.json"   "$ARTIFACTS/compile-commands.json" 2>/dev/null || true
+FEATURE_DOCTOR_AFTER_STATUS=${PIPESTATUS[0]}
+set -e
+echo "Feature doctor after main status: $FEATURE_DOCTOR_AFTER_STATUS"
+cp "$HOME/.agentInjectionIII/cache/compile-commands.json" \
+  "$ARTIFACTS/compile-commands.json" 2>/dev/null || true
 
 echo "==> Modify Swift source in second xcodeproj without rebuilding app"
 python3 - "$FEATURE_SOURCE" <<'PY'
