@@ -97,6 +97,7 @@ The MCP server sends the same `ControlRequest` messages as
 
 ### Diagnostics
 
+- `get_diagnostics` — preferred troubleshooting snapshot combining status, targets, doctor, compiler state, trace state, logs, injection lifecycle events, and last error
 - `get_logs`
 - `clear_logs`
 - `get_injection_events`

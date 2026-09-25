@@ -113,6 +113,40 @@ final class ControlRouterTests: XCTestCase {
         }
     }
 
+    func testDiagnosticsReturnsNonConsumingSnapshot() throws {
+        let backend = ScaffoldInjectionBackend(
+            projectRoot: "/tmp/project"
+        )
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(
+            action: .diagnostics,
+            limit: 50
+        )
+        let response = try route(
+            request,
+            through: router
+        )
+
+        XCTAssertTrue(response.ok)
+        XCTAssertNotNil(response.diagnostics)
+        XCTAssertEqual(
+            response.diagnostics?.status.name,
+            "scaffold"
+        )
+        XCTAssertEqual(
+            response.diagnostics?.trace.connected,
+            false
+        )
+        XCTAssertEqual(
+            response.diagnostics?.doctor.ready,
+            false
+        )
+    }
+
     func testScreenshotFailsCleanlyWithoutRuntime() throws {
         let backend = ScaffoldInjectionBackend()
         let router = ControlRouter(
