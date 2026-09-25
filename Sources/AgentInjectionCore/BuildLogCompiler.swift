@@ -1756,15 +1756,31 @@ public final class BuildLogCompiler {
 
         return deduplicatedCompilationCandidates(
             memoryCache.compactMap { key, command in
+                let matches: Bool
                 if platform.isEmpty {
-                    return key.hasPrefix(source + "|")
-                        ? command
-                        : nil
+                    matches = key.hasPrefix(source + "|")
+                } else {
+                    matches = key == legacyKey ||
+                        key.hasPrefix(prefix)
                 }
-                return key == legacyKey ||
-                    key.hasPrefix(prefix)
-                    ? command
-                    : nil
+                guard matches else {
+                    return nil
+                }
+
+                if command.arch == nil ||
+                   command.targetTriple == nil ||
+                   (command.module == nil &&
+                    command.command.contains(" -module-name ")) {
+                    return makeCachedCommand(
+                        command: command.command,
+                        logPath: command.logPath,
+                        workingDirectory: command.workingDirectory,
+                        platformHint: command.platform ??
+                            platform
+                    )
+                }
+
+                return command
             }
         )
     }
@@ -1786,8 +1802,10 @@ public final class BuildLogCompiler {
         cacheLock.lock()
         let legacyKey = source + "|" + platform
         let prefix = legacyKey + "|"
-        for key in memoryCache.keys
-        where key == legacyKey || key.hasPrefix(prefix) {
+        let keys = memoryCache.keys.filter {
+            $0 == legacyKey || $0.hasPrefix(prefix)
+        }
+        for key in keys {
             memoryCache.removeValue(forKey: key)
         }
         persistCacheLocked()
