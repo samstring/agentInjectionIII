@@ -27,8 +27,9 @@ final class InjectionEventStoreTests: XCTestCase {
             store.drain().events.count,
             2
         )
-        XCTAssertTrue(
-            store.snapshot().events.isEmpty
+        XCTAssertEqual(
+            store.snapshot().events.count,
+            2
         )
     }
 

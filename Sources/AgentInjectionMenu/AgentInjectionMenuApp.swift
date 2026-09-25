@@ -12,11 +12,14 @@ struct AgentInjectionMenuApp: App {
             StatusMenuView(model: model)
                 .frame(minWidth: 340)
                 .task {
-                    model.start()
+                    model.refreshDiagnostics()
                 }
         } label: {
             Image(systemName: model.symbolName)
                 .help(model.statusTitle)
+                .task {
+                    model.start()
+                }
         }
         .menuBarExtraStyle(.window)
     }
@@ -26,6 +29,8 @@ struct AgentInjectionMenuApp: App {
 final class MenuStatusModel: ObservableObject {
     @Published private(set) var diagnostics:
         DiagnosticsResult?
+    @Published private(set) var daemonStatus:
+        DaemonStatus?
     @Published private(set) var connectionError:
         String?
     @Published private(set) var lastUpdated:
@@ -50,52 +55,87 @@ final class MenuStatusModel: ObservableObject {
 
     var statusTitle: String {
         guard connectionError == nil,
-              let diagnostics else {
+              let daemonStatus else {
             return "Agent Injection Offline"
         }
 
-        if diagnostics.status.ready {
-            return "Agent Injection Ready"
-        }
-
-        if diagnostics.lastError.error != nil {
+        if diagnostics?.lastError.error != nil {
             return "Agent Injection Issue"
         }
 
-        return "Agent Injection Listening"
+        return daemonStatus.backend.ready
+            ? "Agent Injection Ready"
+            : "Agent Injection Listening"
     }
 
     var symbolName: String {
         guard connectionError == nil,
-              let diagnostics else {
+              let daemonStatus else {
             return "circle"
         }
 
-        if diagnostics.lastError.error != nil {
+        if diagnostics?.lastError.error != nil {
             return "exclamationmark.circle.fill"
         }
 
-        if diagnostics.status.ready {
-            return "bolt.circle.fill"
-        }
-
-        return "circle.dotted"
+        return daemonStatus.backend.ready
+            ? "bolt.circle.fill"
+            : "circle.dotted"
     }
 
     func start() {
         guard !started else { return }
         started = true
-        refresh()
+        refreshStatus()
 
         timer = Timer.scheduledTimer(
             withTimeInterval: 2,
             repeats: true
         ) { [weak self] _ in
-            self?.refresh()
+            self?.refreshStatus()
         }
     }
 
-    func refresh() {
+    func refreshStatus() {
+        let socketPath = socketPath
+
+        worker.async { [weak self] in
+            do {
+                let response = try UnixSocketClient(
+                    socketPath: socketPath
+                ).send(
+                    ControlRequest(
+                        action: .status
+                    )
+                )
+
+                guard let status =
+                        response.status else {
+                    throw MenuStatusError(
+                        message:
+                            response.error?.message
+                            ?? "Daemon returned no status payload."
+                    )
+                }
+
+                DispatchQueue.main.async {
+                    self?.daemonStatus = status
+                    self?.connectionError = nil
+                    self?.lastUpdated = Date()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.daemonStatus = nil
+                    self?.diagnostics = nil
+                    self?.connectionError =
+                        String(describing: error)
+                    self?.lastUpdated = Date()
+                }
+            }
+        }
+    }
+
+    func refreshDiagnostics() {
         let socketPath = socketPath
 
         worker.async { [weak self] in
@@ -125,7 +165,6 @@ final class MenuStatusModel: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self?.diagnostics = nil
                     self?.connectionError =
                         String(describing: error)
                     self?.lastUpdated = Date()
@@ -161,7 +200,7 @@ private struct StatusMenuView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    model.refresh()
+                    model.refreshDiagnostics()
                 } label: {
                     Image(
                         systemName: "arrow.clockwise"
