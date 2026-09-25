@@ -41,6 +41,25 @@ public final class InjectionEventStore {
         lock.unlock()
     }
 
+    public func snapshot(
+        limit: Int? = nil
+    ) -> InjectionEventsResult {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var selected = events
+        if let limit {
+            let bounded = max(0, min(limit, 1_000))
+            if selected.count > bounded {
+                selected = Array(selected.suffix(bounded))
+            }
+        }
+
+        return InjectionEventsResult(
+            events: selected
+        )
+    }
+
     public func drain(
         limit: Int? = nil
     ) -> InjectionEventsResult {

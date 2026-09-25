@@ -1438,6 +1438,7 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             appConnected: runtime.connected,
             capabilities: [
                 "status",
+                "diagnostics",
                 "source-inject",
                 "load-dylib",
                 "swift",
@@ -1774,6 +1775,26 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         return BackendInjectionResponse(
             results: [result],
             error: error
+        )
+    }
+
+    public func diagnostics(
+        limit: Int?
+    ) -> DiagnosticsResult {
+        DiagnosticsResult(
+            status: status(),
+            targets: targets(),
+            trace: traceServer.status(),
+            compilerState: compilerState(),
+            doctor: doctor(path: nil),
+            logs: logs(
+                since: nil,
+                limit: limit
+            ),
+            events: eventStore.snapshot(
+                limit: limit
+            ),
+            lastError: lastError()
         )
     }
 

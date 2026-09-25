@@ -17,6 +17,7 @@ public protocol InjectionBackend: AnyObject {
     func inject(files: [String], target: String?) -> BackendInjectionResponse
     func loadDylib(path: String, target: String?) -> BackendInjectionResponse
     func doctor(path: String?) -> DoctorReport
+    func diagnostics(limit: Int?) -> DiagnosticsResult
     func screenshot(path: String?, target: String?) -> Result<ScreenshotResult, ControlError>
     func touchCapture(target: String?) -> Result<TouchResult, ControlError>
     func touchRead(target: String?) -> Result<TouchResult, ControlError>
@@ -154,6 +155,29 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                     message: "Scaffold backend has no injection engine."
                 )
             ]
+        )
+    }
+
+    public func diagnostics(
+        limit: Int?
+    ) -> DiagnosticsResult {
+        DiagnosticsResult(
+            status: status(),
+            targets: targets(),
+            trace: TraceResult(
+                connected: false,
+                active: false
+            ),
+            compilerState: compilerState(),
+            doctor: doctor(path: nil),
+            logs: logs(
+                since: nil,
+                limit: limit
+            ),
+            events: InjectionEventsResult(
+                events: []
+            ),
+            lastError: lastError()
         )
     }
 

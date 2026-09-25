@@ -52,6 +52,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] inject FILE [FILE ...]
       injectionctl [--socket PATH] [--target ID] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
+      injectionctl [--socket PATH] diagnostics [LIMIT]
       injectionctl [--socket PATH] [--target ID] screenshot [OUTPUT.png]
       injectionctl [--socket PATH] [--target ID] touch capture
       injectionctl [--socket PATH] [--target ID] touch read
@@ -185,6 +186,25 @@ case "doctor":
         path: options.arguments.count == 2
             ? absolutePath(options.arguments[1])
             : nil
+    )
+
+case "diagnostics":
+    guard options.arguments.count <= 2 else {
+        fatalUsage("diagnostics accepts at most one LIMIT.")
+    }
+
+    var limit: Int?
+    if options.arguments.count == 2 {
+        guard let parsed = Int(options.arguments[1]),
+              parsed > 0 else {
+            fatalUsage("diagnostics limit must be a positive integer.")
+        }
+        limit = parsed
+    }
+
+    request = ControlRequest(
+        action: .diagnostics,
+        limit: limit
     )
 
 case "screenshot":

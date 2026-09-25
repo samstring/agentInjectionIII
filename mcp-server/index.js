@@ -104,6 +104,27 @@ server.tool(
 );
 
 server.tool(
+  "get_diagnostics",
+  "Get a comprehensive non-consuming injection diagnostic snapshot for troubleshooting daemon, runtime, compiler, injection, and trace failures",
+  {
+    limit: z.number()
+      .int()
+      .positive()
+      .max(1000)
+      .optional()
+      .describe(
+        "Maximum recent log and lifecycle entries to include"
+      )
+  },
+  async ({ limit }) =>
+    call(
+      "diagnostics",
+      { limit },
+      30000
+    )
+);
+
+server.tool(
   "inject_sources",
   "Compile and hot-inject changed Swift/Objective-C sources into the running app",
   {

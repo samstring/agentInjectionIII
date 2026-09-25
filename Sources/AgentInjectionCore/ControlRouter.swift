@@ -96,6 +96,14 @@ public final class ControlRouter {
                 report: backend.doctor(path: request.path)
             )
 
+        case .diagnostics:
+            return .diagnostics(
+                id: request.id,
+                result: backend.diagnostics(
+                    limit: request.limit
+                )
+            )
+
         case .screenshot:
             switch backend.screenshot(
                 path: request.path,

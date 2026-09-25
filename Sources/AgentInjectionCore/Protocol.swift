@@ -5,6 +5,7 @@ public enum ControlAction: String, Codable, Sendable {
     case inject
     case loadDylib = "load_dylib"
     case doctor
+    case diagnostics
     case screenshot
     case traceStart = "trace_start"
     case traceStop = "trace_stop"
@@ -411,6 +412,40 @@ public struct InjectionEventsResult: Codable, Sendable {
     }
 }
 
+public struct DiagnosticsResult: Codable, Sendable {
+    public let generatedAt: Double
+    public let status: BackendStatus
+    public let targets: TargetsResult
+    public let trace: TraceResult
+    public let compilerState: CompilerStateResult
+    public let doctor: DoctorReport
+    public let logs: LogsResult
+    public let events: InjectionEventsResult
+    public let lastError: LastErrorResult
+
+    public init(
+        generatedAt: Double = Date.timeIntervalSinceReferenceDate,
+        status: BackendStatus,
+        targets: TargetsResult,
+        trace: TraceResult,
+        compilerState: CompilerStateResult,
+        doctor: DoctorReport,
+        logs: LogsResult,
+        events: InjectionEventsResult,
+        lastError: LastErrorResult
+    ) {
+        self.generatedAt = generatedAt
+        self.status = status
+        self.targets = targets
+        self.trace = trace
+        self.compilerState = compilerState
+        self.doctor = doctor
+        self.logs = logs
+        self.events = events
+        self.lastError = lastError
+    }
+}
+
 public struct ProfileStat: Codable, Sendable {
     public let method: String
     public let elapsedSeconds: Double
@@ -638,6 +673,7 @@ public struct ControlResponse: Codable, Sendable {
     public let status: DaemonStatus?
     public let injections: [InjectionResult]?
     public let doctor: DoctorReport?
+    public let diagnostics: DiagnosticsResult?
     public let screenshot: ScreenshotResult?
     public let trace: TraceResult?
     public let targets: TargetsResult?
@@ -662,6 +698,7 @@ public struct ControlResponse: Codable, Sendable {
         status: DaemonStatus? = nil,
         injections: [InjectionResult]? = nil,
         doctor: DoctorReport? = nil,
+        diagnostics: DiagnosticsResult? = nil,
         screenshot: ScreenshotResult? = nil,
         trace: TraceResult? = nil,
         targets: TargetsResult? = nil,
@@ -685,6 +722,7 @@ public struct ControlResponse: Codable, Sendable {
         self.status = status
         self.injections = injections
         self.doctor = doctor
+        self.diagnostics = diagnostics
         self.screenshot = screenshot
         self.trace = trace
         self.targets = targets
@@ -735,6 +773,17 @@ public struct ControlResponse: Codable, Sendable {
                     code: "DOCTOR_NOT_READY",
                     message: "One or more required injection checks failed."
                 )
+        )
+    }
+
+    public static func diagnostics(
+        id: String,
+        result: DiagnosticsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            diagnostics: result
         )
     }
 
