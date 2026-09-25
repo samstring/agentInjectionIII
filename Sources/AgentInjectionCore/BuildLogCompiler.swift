@@ -573,6 +573,20 @@ public final class BuildLogCompiler {
         arch: String
     ) -> Result<Artifact, ControlError> {
         ingestInterceptedCommands()
+        return compileAndLink(
+            source: source,
+            platform: platform,
+            arch: arch,
+            allowCachedRetry: true
+        )
+    }
+
+    private func compileAndLink(
+        source: String,
+        platform: String,
+        arch: String,
+        allowCachedRetry: Bool
+    ) -> Result<Artifact, ControlError> {
         let source = standardized(source)
 
         guard fileManager.fileExists(atPath: source) else {
@@ -754,11 +768,12 @@ public final class BuildLogCompiler {
                 platform: platform
             )
 
-            if usedPersistentOrMemoryCache {
+            if usedPersistentOrMemoryCache && allowCachedRetry {
                 return compileAndLink(
                     source: source,
                     platform: platform,
-                    arch: arch
+                    arch: arch,
+                    allowCachedRetry: false
                 )
             }
 
