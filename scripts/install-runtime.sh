@@ -24,6 +24,35 @@ git -C "$SRC" fetch origin "$UPSTREAM_REF"
 git -C "$SRC" checkout -f FETCH_HEAD
 git -C "$SRC" submodule update --init --recursive
 
+# Agent mode must never fall back to InjectionLite's save watcher. InjectionNext
+# normally prevents that by noticing its client class during +load, but custom
+# bundle link/load order can let InjectionLite start first. Honor the existing
+# INJECTION_NOSTANDALONE setting in that earlier +load path as well.
+INJECTION_BOOT="$SRC/InjectionLite/Sources/InjectionImplC/InjectionBoot.mm"
+python3 - "$INJECTION_BOOT" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+needle = """    static NSObject *singleton;
+    if (objc_getClass("InjectionNext")) return;
+"""
+replacement = """    static NSObject *singleton;
+    if (_insetting(@INJECTION_NOSTANDALONE)) return;
+    if (objc_getClass("InjectionNext")) return;
+"""
+
+if replacement in text:
+    raise SystemExit(0)
+if needle not in text:
+    raise SystemExit(
+        "Unable to patch InjectionLite standalone guard; "
+        "upstream InjectionBoot.mm changed."
+    )
+path.write_text(text.replace(needle, replacement, 1))
+PY
+
 # Compile the Agent-only Swift introspection bridge into the locally built
 # InjectionNext runtime. This keeps SwiftTrace lifetime/call-order APIs out of
 # the user's application target while making them available over ObjC runtime.
