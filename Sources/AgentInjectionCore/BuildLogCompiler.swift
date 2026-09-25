@@ -1,4 +1,5 @@
 import Foundation
+import AgentInjectionHostShim
 import InjectionLite
 
 /// Headless source recompiler inspired by InjectionLite's build-log strategy.
@@ -93,6 +94,11 @@ public final class BuildLogCompiler {
             "-lXCTestSwiftSupport"
         ]
     ) {
+        // Force the host sentinel object into injectionctl/injectiond so
+        // InjectionLite sees an InjectionNext class during Objective-C +load
+        // and does not start its standalone save watcher.
+        AgentInjectionLinkHostShim()
+
         self.projectRoot = projectRoot
         self.derivedDataRoot = derivedDataRoot
         self.selectedXcodePath = xcodePath
