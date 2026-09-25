@@ -443,4 +443,78 @@ final class BuildLogCompilerTests: XCTestCase {
         )
     }
 
+
+    func testCachedCompileFailureRetriesOnlyOnce() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-cache-retry-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let derived = root.appendingPathComponent("DerivedData")
+        try FileManager.default.createDirectory(
+            at: derived,
+            withIntermediateDirectories: true
+        )
+
+        let source = root.appendingPathComponent("Feature.swift")
+        try "struct Feature {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let interceptionLog = root.appendingPathComponent(
+            "frontend-commands.log"
+        )
+        let command = [
+            "/usr/bin/false",
+            "swift-frontend",
+            "-frontend",
+            "-c",
+            "-primary-file", source.path,
+            "-target", "arm64-apple-ios18.0-simulator",
+            "-module-name", "FeatureModule",
+            "-D", "DEBUG"
+        ].joined(separator: " ")
+        try (root.path + "\t" + command + "\n").write(
+            to: interceptionLog,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            derivedDataRoot: derived.path,
+            cacheRoot: root.appendingPathComponent("cache").path,
+            interceptionLogPath: interceptionLog.path
+        )
+
+        let start = Date()
+        let result = compiler.compileAndLink(
+            source: source.path,
+            platform: "iPhoneSimulator",
+            arch: "arm64"
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        switch result {
+        case .success:
+            XCTFail("Expected compile failure")
+        case .failure(let error):
+            XCTAssertEqual(
+                error.code,
+                "COMPILE_COMMAND_NOT_FOUND"
+            )
+        }
+
+        XCTAssertLessThan(
+            elapsed,
+            5,
+            "Cached compile retry should be bounded and must not recurse indefinitely."
+        )
+    }
+
 }
