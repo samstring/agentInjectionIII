@@ -514,7 +514,11 @@ final class BuildLogCompilerTests: XCTestCase {
         case .failure(let error):
             XCTAssertEqual(
                 error.code,
-                "COMPILE_COMMAND_NOT_FOUND"
+                "COMPILE_FAILED"
+            )
+            XCTAssertTrue(
+                error.message.contains("/usr/bin/false"),
+                error.message
             )
         }
 
