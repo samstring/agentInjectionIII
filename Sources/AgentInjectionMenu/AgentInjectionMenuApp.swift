@@ -3,14 +3,14 @@ import AppKit
 import AgentInjectionCore
 
 @main
-struct AgentInjectionMenuApp: App {
+struct AgentInjectionIIIApp: App {
     @StateObject private var model =
         MenuStatusModel()
 
     var body: some Scene {
         MenuBarExtra {
             StatusMenuView(model: model)
-                .frame(minWidth: 340)
+                .frame(minWidth: 360)
                 .task {
                     model.refreshDiagnostics()
                 }
@@ -38,11 +38,13 @@ final class MenuStatusModel: ObservableObject {
 
     private let socketPath: String
     private let worker = DispatchQueue(
-        label: "agentInjectionIII.menu.status",
+        label: "AgentInjectionIII.menu.status",
         qos: .utility
     )
+    private let daemonController: DaemonController
     private var timer: Timer?
     private var started = false
+    private var terminateObserver: NSObjectProtocol?
 
     init(
         socketPath: String =
@@ -51,21 +53,23 @@ final class MenuStatusModel: ObservableObject {
             ] ?? "/tmp/agentInjectionIII.sock"
     ) {
         self.socketPath = socketPath
+        self.daemonController =
+            DaemonController(socketPath: socketPath)
     }
 
     var statusTitle: String {
         guard connectionError == nil,
               let daemonStatus else {
-            return "Agent Injection Offline"
+            return "AgentInjectionIII Offline"
         }
 
         if diagnostics?.lastError.error != nil {
-            return "Agent Injection Issue"
+            return "AgentInjectionIII Issue"
         }
 
         return daemonStatus.backend.ready
-            ? "Agent Injection Ready"
-            : "Agent Injection Listening"
+            ? "AgentInjectionIII Ready"
+            : "AgentInjectionIII Listening"
     }
 
     var symbolName: String {
@@ -86,7 +90,15 @@ final class MenuStatusModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+
+        daemonController.ensureRunning()
         refreshStatus()
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.75
+        ) { [weak self] in
+            self?.refreshStatus()
+        }
 
         timer = Timer.scheduledTimer(
             withTimeInterval: 2,
@@ -94,6 +106,29 @@ final class MenuStatusModel: ObservableObject {
         ) { [weak self] _ in
             self?.refreshStatus()
         }
+
+        terminateObserver =
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.shutdown()
+            }
+    }
+
+    func shutdown() {
+        timer?.invalidate()
+        timer = nil
+
+        if let terminateObserver {
+            NotificationCenter.default.removeObserver(
+                terminateObserver
+            )
+            self.terminateObserver = nil
+        }
+
+        daemonController.stopOwnedDaemon()
     }
 
     func refreshStatus() {
@@ -124,9 +159,10 @@ final class MenuStatusModel: ObservableObject {
                     self?.lastUpdated = Date()
                 }
             } catch {
+                self?.daemonController.ensureRunning()
+
                 DispatchQueue.main.async {
                     self?.daemonStatus = nil
-                    self?.diagnostics = nil
                     self?.connectionError =
                         String(describing: error)
                     self?.lastUpdated = Date()
@@ -160,16 +196,281 @@ final class MenuStatusModel: ObservableObject {
 
                 DispatchQueue.main.async {
                     self?.diagnostics = diagnostics
+                    self?.daemonStatus =
+                        diagnostics.status
                     self?.connectionError = nil
                     self?.lastUpdated = Date()
                 }
             } catch {
+                self?.daemonController.ensureRunning()
+
                 DispatchQueue.main.async {
                     self?.connectionError =
                         String(describing: error)
                     self?.lastUpdated = Date()
                 }
             }
+        }
+    }
+}
+
+private final class DaemonController {
+    private let socketPath: String
+    private let queue = DispatchQueue(
+        label: "AgentInjectionIII.daemon.lifecycle",
+        qos: .utility
+    )
+
+    private var ownedProcess: Process?
+    private var logHandle: FileHandle?
+
+    init(socketPath: String) {
+        self.socketPath = socketPath
+    }
+
+    func ensureRunning() {
+        queue.async { [weak self] in
+            guard let self else { return }
+
+            if self.daemonResponds() {
+                return
+            }
+
+            if let process = self.ownedProcess,
+               process.isRunning {
+                return
+            }
+
+            self.launchDaemon()
+        }
+    }
+
+    func stopOwnedDaemon() {
+        queue.sync {
+            if let process = ownedProcess,
+               process.isRunning {
+                process.terminate()
+            }
+
+            ownedProcess = nil
+            try? logHandle?.close()
+            logHandle = nil
+        }
+    }
+
+    private func daemonResponds() -> Bool {
+        do {
+            let response = try UnixSocketClient(
+                socketPath: socketPath
+            ).send(
+                ControlRequest(action: .status)
+            )
+            return response.status != nil
+        } catch {
+            return false
+        }
+    }
+
+    private func launchDaemon() {
+        guard let daemonURL = resolveDaemonURL() else {
+            return
+        }
+
+        if FileManager.default.fileExists(
+            atPath: socketPath
+        ) {
+            try? FileManager.default.removeItem(
+                atPath: socketPath
+            )
+        }
+
+        let process = Process()
+        process.executableURL = daemonURL
+
+        var arguments = [
+            "--socket", socketPath,
+            "--enable-devices"
+        ]
+
+        let environment =
+            ProcessInfo.processInfo.environment
+
+        if let projectRoot =
+            environment[
+                "AGENT_INJECTION_PROJECT_ROOT"
+            ],
+           !projectRoot.isEmpty {
+            arguments += [
+                "--project", projectRoot
+            ]
+        }
+
+        if let derivedData =
+            environment[
+                "AGENT_INJECTION_DERIVED_DATA"
+            ],
+           !derivedData.isEmpty {
+            arguments += [
+                "--derived-data", derivedData
+            ]
+        }
+
+        if let xcodePath =
+            environment[
+                "AGENT_INJECTION_XCODE_PATH"
+            ],
+           !xcodePath.isEmpty {
+            arguments += [
+                "--xcode-path", xcodePath
+            ]
+        }
+
+        process.arguments = arguments
+        process.environment = environment
+
+        if let handle = openLogHandle() {
+            process.standardOutput = handle
+            process.standardError = handle
+            logHandle = handle
+        }
+
+        process.terminationHandler = {
+            [weak self, weak process] _ in
+            guard let self,
+                  let process else {
+                return
+            }
+
+            self.queue.async {
+                if self.ownedProcess === process {
+                    self.ownedProcess = nil
+                    try? self.logHandle?.close()
+                    self.logHandle = nil
+                }
+            }
+        }
+
+        do {
+            try process.run()
+            ownedProcess = process
+        } catch {
+            try? logHandle?.close()
+            logHandle = nil
+            ownedProcess = nil
+        }
+    }
+
+    private func resolveDaemonURL() -> URL? {
+        let fileManager = FileManager.default
+        let environment =
+            ProcessInfo.processInfo.environment
+
+        if let override =
+            environment["AGENT_INJECTION_DAEMON"],
+           fileManager.isExecutableFile(
+                atPath: override
+           ) {
+            return URL(fileURLWithPath: override)
+        }
+
+        let bundled =
+            Bundle.main.bundleURL
+                .appendingPathComponent(
+                    "Contents/Helpers/injectiond"
+                )
+        if fileManager.isExecutableFile(
+            atPath: bundled.path
+        ) {
+            return bundled
+        }
+
+        if let executable =
+            Bundle.main.executableURL {
+            let sibling =
+                executable
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(
+                        "injectiond"
+                    )
+            if fileManager.isExecutableFile(
+                atPath: sibling.path
+            ) {
+                return sibling
+            }
+        }
+
+        let commandPath =
+            URL(fileURLWithPath:
+                CommandLine.arguments[0]
+            )
+            .standardizedFileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("injectiond")
+        if fileManager.isExecutableFile(
+            atPath: commandPath.path
+        ) {
+            return commandPath
+        }
+
+        if let path = environment["PATH"] {
+            for directory in
+                path.split(separator: ":") {
+                let candidate =
+                    URL(
+                        fileURLWithPath:
+                            String(directory)
+                    )
+                    .appendingPathComponent(
+                        "injectiond"
+                    )
+                if fileManager.isExecutableFile(
+                    atPath: candidate.path
+                ) {
+                    return candidate
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func openLogHandle() -> FileHandle? {
+        let fileManager = FileManager.default
+        let logs =
+            fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent(
+                    "Library/Logs/AgentInjectionIII",
+                    isDirectory: true
+                )
+
+        do {
+            try fileManager.createDirectory(
+                at: logs,
+                withIntermediateDirectories: true
+            )
+
+            let file =
+                logs.appendingPathComponent(
+                    "injectiond.log"
+                )
+
+            if !fileManager.fileExists(
+                atPath: file.path
+            ) {
+                fileManager.createFile(
+                    atPath: file.path,
+                    contents: nil
+                )
+            }
+
+            let handle =
+                try FileHandle(
+                    forWritingTo: file
+                )
+            try handle.seekToEnd()
+            return handle
+        } catch {
+            return nil
         }
     }
 }
@@ -211,7 +512,7 @@ private struct StatusMenuView: View {
 
             if let error = model.connectionError {
                 Label(
-                    "injectiond unavailable",
+                    "injectiond is starting or unavailable",
                     systemImage:
                         "exclamationmark.triangle"
                 )
@@ -318,7 +619,8 @@ private struct StatusMenuView: View {
 
                 Spacer()
 
-                Button("Quit") {
+                Button("Quit AgentInjectionIII") {
+                    model.shutdown()
                     NSApplication.shared.terminate(nil)
                 }
             }

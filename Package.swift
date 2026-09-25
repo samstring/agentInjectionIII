@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "agentInjectionIII",
+    name: "AgentInjectionIII",
     platforms: [
         .macOS(.v13)
     ],
@@ -25,7 +25,7 @@ let package = Package(
             targets: ["injectionctl"]
         ),
         .executable(
-            name: "agent-injection-menu",
+            name: "AgentInjectionIII",
             targets: ["AgentInjectionMenu"]
         )
     ],
