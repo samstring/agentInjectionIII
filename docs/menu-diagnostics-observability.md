@@ -11,9 +11,12 @@ The feature has two user-facing outcomes:
 
 The diagnostics surface is intentionally broader than networking. It covers daemon state, runtime discovery/handshake, compiler recovery, compile/link/injection lifecycle, trace bridge state, and the most recent structured error.
 
+The menu also owns the human-triggered InjectionIII-style workflow: an FSEvents watcher in `injectiond` records pending source changes, while **Control + -** or **Inject Changed Files** explicitly triggers injection. Saving alone never injects.
+
 ## Design principles
 
 - **One source of truth.** The menu bar, CLI, and MCP adapter all read the same Unix-domain-socket control plane exposed by injectiond.
+- **Shared pending queue.** Human hotkey injection and Agent/MCP explicit injection reconcile against the same pending source store, preventing duplicate reinjection.
 - **Keep injection logic in the daemon.** The menu app may own the daemon process lifecycle, but compilation, runtime transport, injection, tracing, and diagnostics remain in `injectiond`.
 - **Non-consuming diagnostics.** Troubleshooting history must still be available after a failure. The diagnostics API therefore snapshots logs/events without draining them.
 - **Backward compatibility.** Existing `logs`, `events`, `doctor`, `status`, and MCP tools remain available.

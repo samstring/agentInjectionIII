@@ -2,7 +2,7 @@
 
 Agent-first, headless code injection for iOS development.
 
-> **An AI agent explicitly decides when code is injected. Saving a source file is not the control API.**
+> **Injection is explicit. Saving a source file records it as pending; an AI agent, the menu, CLI/MCP, or the Control + - hotkey decides when to inject.**
 
 ## Current status
 
@@ -38,16 +38,21 @@ AI Agent
       running Simulator app
 ```
 
-The important trigger is:
+There are two explicit trigger paths:
 
 ```text
 Agent edits files
    -> Agent decides the edit is complete
    -> injectionctl inject Foo.swift Bar.m
    -> compile / link / inject
+
+Developer saves files
+   -> project watcher records pending source paths
+   -> Control + - / menu / inject-pending
+   -> compile / link / inject
 ```
 
-There is no file watcher in the control path.
+The watcher never injects merely because a file was saved. It only records pending changes.
 
 ## What is implemented
 
@@ -59,6 +64,9 @@ There is no file watcher in the control path.
 - local Simulator runtime connection on TCP port `8887`
 - explicit `load-dylib` command
 - explicit `inject FILE...` command
+- InjectionIII-style FSEvents project watcher with non-automatic pending changes
+- `pending` / `inject-pending` CLI and MCP equivalents
+- global `Control + -` manual injection shortcut
 - structured `doctor [SOURCE]` diagnostics for Agent preflight
 - Xcode `.xcactivitylog` lookup
 - Swift single-file recompilation
@@ -111,6 +119,15 @@ open ~/Applications/AgentInjectionIII.app
 
 The app is a menu-bar-only app (`LSUIElement`) and bundles its own `injectiond` helper. When the daemon is not reachable, the app starts it automatically with `--enable-devices`. Quitting AgentInjectionIII stops the daemon instance that the app owns.
 
+For manual use without an AI agent:
+
+1. Choose a project directory from the menu.
+2. Edit and save Swift/Objective-C/Objective-C++ source files.
+3. The watcher records those paths as pending without injecting automatically.
+4. Press **Control + -** anywhere, or click **Inject Changed Files** in the menu.
+
+Successful injections are removed from the pending list. Failed files remain pending for another attempt. Explicit Agent/MCP injections also clear successfully injected files so the manual shortcut does not inject them a second time.
+
 For compatibility, existing state paths remain lowercase:
 
 ```text
@@ -127,6 +144,24 @@ AGENT_INJECTION_PROJECT_ROOT
 AGENT_INJECTION_DERIVED_DATA
 AGENT_INJECTION_XCODE_PATH
 ```
+
+## InjectionIII compatibility
+
+AgentInjectionIII is intentionally opt-in per developer and does not replace InjectionIII for the rest of a team.
+
+The Debug run script only embeds the Agent runtime when the current Mac has a local runtime under `~/.agentInjectionIII/runtime`. If that runtime is absent, `scripts/embed-runtime.sh` exits successfully without modifying the built app. The bootstrap then retains the classic fallback:
+
+```text
+embedded Agent iOSInjection.bundle present
+        -> load AgentInjectionIII runtime
+
+embedded Agent runtime absent
+        -> try /Applications/InjectionIII.app/Contents/Resources/iOSInjection.bundle
+```
+
+Therefore a teammate who continues to run InjectionIII.app can use the same project, Podfile and Injection build settings without installing AgentInjectionIII. AgentInjectionIII's watcher, daemon, `Control + -` shortcut and Unix socket are separate from InjectionIII's watcher and historical `Control + =` shortcut.
+
+The two desktop apps are not required to run simultaneously on the same Mac. The compatibility goal is that project integration remains non-destructive and each developer can choose their local workflow independently.
 
 ## Build
 

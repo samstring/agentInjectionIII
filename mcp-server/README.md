@@ -85,6 +85,8 @@ The MCP server sends the same `ControlRequest` messages as
 - `get_status`
 - `list_targets`
 - `doctor`
+- `get_pending_changes`
+- `inject_pending_changes`
 - `inject_sources`
 - `load_dylib`
 

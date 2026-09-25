@@ -14,12 +14,12 @@
     if (embeddedPath.length > 0) {
         NSBundle *embedded = [NSBundle bundleWithPath:embeddedPath];
         if ([embedded load]) {
-            NSLog(@"agentInjectionIII: loaded embedded runtime");
+            NSLog(@"AgentInjectionIII: loaded embedded runtime");
             [AgentTraceBridge start];
             return;
         }
 
-        NSLog(@"agentInjectionIII: failed to load embedded runtime at %@",
+        NSLog(@"AgentInjectionIII: failed to load embedded runtime at %@",
               embeddedPath);
     }
 
@@ -30,7 +30,7 @@
     if ([[NSFileManager defaultManager] fileExistsAtPath:classicPath]) {
         NSBundle *classic = [NSBundle bundleWithPath:classicPath];
         if ([classic load]) {
-            NSLog(@"agentInjectionIII: loaded InjectionIII.app runtime");
+            NSLog(@"AgentInjectionIII: loaded InjectionIII.app runtime");
         }
     }
 #endif
