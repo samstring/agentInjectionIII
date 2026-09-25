@@ -1,4 +1,5 @@
 import UIKit
+import SmokeFeature
 
 @objc(SmokeLifetimeProbe)
 private final class SmokeLifetimeProbe: NSObject {
@@ -153,6 +154,16 @@ final class SmokeViewController: UIViewController {
             atomically: true,
             encoding: .utf8
         )
+
+        if let featureMarker = documentURL(
+            named: "agentInjection-feature.txt"
+        ) {
+            try? smokeFeatureMessage().write(
+                to: featureMarker,
+                atomically: true,
+                encoding: .utf8
+            )
+        }
     }
 
     private func writeTouchTarget() {

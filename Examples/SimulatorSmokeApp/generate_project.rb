@@ -3,6 +3,76 @@ require 'xcodeproj'
 require 'fileutils'
 
 root = File.expand_path(__dir__)
+
+feature_root = File.join(root, 'FeatureProject')
+feature_project_path = File.join(
+  feature_root,
+  'SmokeFeature.xcodeproj'
+)
+feature_generated = File.join(
+  feature_root,
+  'Generated'
+)
+FileUtils.mkdir_p(feature_root)
+FileUtils.rm_rf(feature_project_path)
+FileUtils.rm_rf(feature_generated)
+FileUtils.mkdir_p(feature_generated)
+
+feature_project = Xcodeproj::Project.new(
+  feature_project_path
+)
+feature_target = feature_project.new_target(
+  :framework,
+  'SmokeFeature',
+  :ios,
+  '16.0'
+)
+
+feature_sources = feature_project.main_group
+  .new_group('Sources', 'Sources')
+feature_source = feature_sources.new_file(
+  'SmokeFeature.swift'
+)
+feature_target.source_build_phase
+  .add_file_reference(feature_source)
+
+generated_group = feature_project.main_group
+  .new_group('Generated', 'Generated')
+64.times do |index|
+  name = format('Filler%03d.swift', index)
+  File.write(
+    File.join(feature_generated, name),
+    "internal struct SmokeFeatureFiller#{index} { let value = #{index} }\n"
+  )
+  ref = generated_group.new_file(name)
+  feature_target.source_build_phase
+    .add_file_reference(ref)
+end
+
+feature_target.build_configurations.each do |config|
+  settings = config.build_settings
+  settings['PRODUCT_BUNDLE_IDENTIFIER'] =
+    'dev.agentinjection.smoke.feature'
+  settings['PRODUCT_NAME'] = 'SmokeFeature'
+  settings['SWIFT_VERSION'] = '5.0'
+  settings['DEFINES_MODULE'] = 'YES'
+  settings['SKIP_INSTALL'] = 'YES'
+  settings['CODE_SIGNING_ALLOWED'] = 'NO'
+  settings['SWIFT_OPTIMIZATION_LEVEL'] =
+    config.name == 'Debug' ? '-Onone' : '-O'
+  settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf'
+  settings['EMIT_FRONTEND_COMMAND_LINES'] = 'YES'
+  settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'NO'
+  settings['OTHER_LDFLAGS'] = [
+    '$(inherited)',
+    '-Xlinker',
+    '-interposable'
+  ]
+end
+
+feature_project.save
+puts "Generated #{feature_project_path}"
+
 project_path = File.join(root, 'SimulatorSmokeApp.xcodeproj')
 FileUtils.rm_rf(project_path)
 
@@ -71,10 +141,20 @@ target.build_configurations.each do |config|
     '$(inherited)',
     '$(SRCROOT)/../../Integration'
   ]
+  settings['FRAMEWORK_SEARCH_PATHS'] = [
+    '$(inherited)',
+    '$(BUILT_PRODUCTS_DIR)'
+  ]
+  settings['LD_RUNPATH_SEARCH_PATHS'] = [
+    '$(inherited)',
+    '@executable_path/Frameworks'
+  ]
   settings['OTHER_LDFLAGS'] = [
     '$(inherited)',
     '-Xlinker',
-    '-interposable'
+    '-interposable',
+    '-framework',
+    'SmokeFeature'
   ]
 end
 

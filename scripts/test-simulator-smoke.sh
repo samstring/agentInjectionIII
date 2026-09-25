@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SMOKE_DIR="$REPO_ROOT/Examples/SimulatorSmokeApp"
 SOURCE="$SMOKE_DIR/Sources/SmokeViewController.swift"
+FEATURE_SOURCE="$SMOKE_DIR/FeatureProject/Sources/SmokeFeature.swift"
 BUNDLE_ID="dev.agentinjection.smoke"
 
 ARTIFACTS="${SMOKE_ARTIFACTS:-${RUNNER_TEMP:-$REPO_ROOT/.artifacts}/agentInjectionIII-smoke}"
@@ -12,8 +13,10 @@ DERIVED="${SMOKE_DERIVED_DATA:-${RUNNER_TEMP:-/tmp}/agentInjectionIII-smoke-deri
 SOCKET="$ARTIFACTS/agentInjectionIII.sock"
 DAEMON_LOG="$ARTIFACTS/injectiond.log"
 BUILD_LOG="$ARTIFACTS/xcodebuild.log"
+FEATURE_BUILD_LOG="$ARTIFACTS/feature-xcodebuild.log"
 STATUS_JSON="$ARTIFACTS/status.json"
 INJECT_JSON="$ARTIFACTS/inject.json"
+FEATURE_INJECT_JSON="$ARTIFACTS/feature-inject.json"
 SCREENSHOT_JSON="$ARTIFACTS/screenshot.json"
 SCREENSHOT_PNG="$ARTIFACTS/after.png"
 TOUCH_CAPTURE_JSON="$ARTIFACTS/touch-capture.json"
@@ -30,8 +33,8 @@ INSTANCES_STOP_JSON="$ARTIFACTS/instances-stop.json"
 
 mkdir -p "$ARTIFACTS"
 rm -rf "$DERIVED"
-rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" \
-  "$STATUS_JSON" "$INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
+rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" "$FEATURE_BUILD_LOG" \
+  "$STATUS_JSON" "$INJECT_JSON" "$FEATURE_INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
   "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON" \
   "$TRACE_START_JSON" "$TRACE_READ_JSON" "$TRACE_STOP_JSON" \
   "$PROFILE_JSON" "$CALL_ORDER_JSON" \
@@ -41,13 +44,16 @@ DAEMON_PID=""
 UDID="${SMOKE_UDID:-}"
 BOOTED_BY_SCRIPT=0
 ORIGINAL_SOURCE="$ARTIFACTS/SmokeViewController.swift.original"
+ORIGINAL_FEATURE_SOURCE="$ARTIFACTS/SmokeFeature.swift.original"
 
 cp "$SOURCE" "$ORIGINAL_SOURCE"
+cp "$FEATURE_SOURCE" "$ORIGINAL_FEATURE_SOURCE"
 
 cleanup() {
   status=$?
 
   cp "$ORIGINAL_SOURCE" "$SOURCE" 2>/dev/null || true
+  cp "$ORIGINAL_FEATURE_SOURCE" "$FEATURE_SOURCE" 2>/dev/null || true
 
   if [ -n "$DAEMON_PID" ]; then
     kill "$DAEMON_PID" >/dev/null 2>&1 || true
@@ -143,7 +149,8 @@ PY
 }
 
 json_assert_injected() {
-  python3 - "$INJECT_JSON" <<'PY'
+  json_path="${1:-$INJECT_JSON}"
+  python3 - "$json_path" <<'PY'
 import json, sys
 
 text = open(sys.argv[1]).read()
@@ -208,6 +215,24 @@ ensure_cocoapods
 cd "$SMOKE_DIR"
 ruby generate_project.rb
 
+echo "==> Build separate Swift feature project"
+set +e
+xcodebuild \
+  -project "$SMOKE_DIR/FeatureProject/SmokeFeature.xcodeproj" \
+  -target SmokeFeature \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  -destination "platform=iOS Simulator,id=$UDID" \
+  -derivedDataPath "$DERIVED" \
+  build 2>&1 | tee "$FEATURE_BUILD_LOG"
+FEATURE_XCODE_STATUS=${PIPESTATUS[0]}
+set -e
+
+if [ "$FEATURE_XCODE_STATUS" != "0" ]; then
+  echo "Smoke feature project build failed." >&2
+  exit "$FEATURE_XCODE_STATUS"
+fi
+
 echo "==> Install CocoaPods"
 export COCOAPODS_DISABLE_STATS=true
 pod install --repo-update
@@ -233,37 +258,67 @@ fi
 echo "==> Seed captured Swift frontend commands from xcodebuild output"
 FRONTEND_LOG="$HOME/.agentInjectionIII/cache/frontend-commands.log"
 mkdir -p "$(dirname "$FRONTEND_LOG")"
-python3 - "$BUILD_LOG" "$FRONTEND_LOG" "$SMOKE_DIR" <<'PY'
+python3 - \
+  "$BUILD_LOG" \
+  "$FEATURE_BUILD_LOG" \
+  "$FRONTEND_LOG" \
+  "$SMOKE_DIR" \
+  "$SMOKE_DIR/FeatureProject" <<'PY'
 from pathlib import Path
 import sys
 
-build_log = Path(sys.argv[1])
-frontend_log = Path(sys.argv[2])
-working_directory = sys.argv[3]
+app_log = Path(sys.argv[1])
+feature_log = Path(sys.argv[2])
+frontend_log = Path(sys.argv[3])
+app_working_directory = sys.argv[4]
+feature_working_directory = sys.argv[5]
+
+specs = [
+    (
+        app_log,
+        app_working_directory,
+        "SmokeViewController.swift",
+    ),
+    (
+        feature_log,
+        feature_working_directory,
+        "SmokeFeature.swift",
+    ),
+]
 
 commands = []
-for raw in build_log.read_text(errors="replace").splitlines():
-    line = raw.strip()
-    if "swift-frontend" not in line:
-        continue
-    if " -frontend " not in line or " -c " not in line:
-        continue
-    if "SmokeViewController.swift" not in line:
-        continue
-    start = line.find("/")
-    if start < 0:
-        continue
-    command = line[start:]
-    commands.append(f"{working_directory}\t{command}")
+for build_log, working_directory, source_name in specs:
+    matched = 0
+    for raw in build_log.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        if "swift-frontend" not in line:
+            continue
+        if " -frontend " not in line or " -c " not in line:
+            continue
+        if source_name not in line:
+            continue
+        start = line.find("/")
+        if start < 0:
+            continue
+        command = line[start:]
+        commands.append(
+            f"{working_directory}\t{command}"
+        )
+        matched += 1
 
-if not commands:
-    raise SystemExit(
-        "No Swift frontend compile command for SmokeViewController.swift "
-        "was found in xcodebuild output."
-    )
+    if not matched:
+        raise SystemExit(
+            "No Swift frontend compile command for "
+            f"{source_name} was found in xcodebuild output."
+        )
 
-frontend_log.write_text("\n".join(commands) + "\n")
-print(f"Captured {len(commands)} Swift frontend command(s) -> {frontend_log}")
+frontend_log.write_text(
+    "\n".join(commands) + "\n"
+)
+print(
+    f"Captured {len(commands)} Swift frontend command(s) "
+    f"-> {frontend_log}"
+)
 PY
 
 APP="$DERIVED/Build/Products/Debug-iphonesimulator/SimulatorSmokeApp.app"
@@ -276,6 +331,18 @@ if [ ! -d "$APP/iOSInjection.bundle" ]; then
   echo "Embedded iOSInjection.bundle not found in smoke app." >&2
   exit 1
 fi
+
+FEATURE_FRAMEWORK="$DERIVED/Build/Products/Debug-iphonesimulator/SmokeFeature.framework"
+if [ ! -d "$FEATURE_FRAMEWORK" ]; then
+  echo "Built feature framework not found: $FEATURE_FRAMEWORK" >&2
+  exit 1
+fi
+
+mkdir -p "$APP/Frameworks"
+rm -rf "$APP/Frameworks/SmokeFeature.framework"
+/usr/bin/ditto \
+  "$FEATURE_FRAMEWORK" \
+  "$APP/Frameworks/SmokeFeature.framework"
 
 echo "==> Start injectiond"
 cd "$REPO_ROOT"
@@ -329,12 +396,16 @@ DATA_CONTAINER="$(
   xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data
 )"
 MARKER="$DATA_CONTAINER/Documents/agentInjection-smoke.txt"
+FEATURE_MARKER="$DATA_CONTAINER/Documents/agentInjection-feature.txt"
 TOUCH_TARGET="$DATA_CONTAINER/Documents/agentInjection-touch-target.json"
 TOUCH_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch.txt"
 TOUCH_EVENT_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch-event.txt"
 
 echo "==> Verify initial Swift behavior: BEFORE"
 wait_for_marker "BEFORE" "$MARKER"
+
+echo "==> Verify separate feature project behavior: FEATURE_BEFORE"
+wait_for_marker "FEATURE_BEFORE" "$FEATURE_MARKER"
 
 echo "==> Modify Swift source without rebuilding app"
 python3 - "$SOURCE" <<'PY'
@@ -351,10 +422,31 @@ PY
 
 echo "==> Inject changed Swift source"
 "$CTL" --socket "$SOCKET" inject "$SOURCE" | tee "$INJECT_JSON"
-json_assert_injected
+json_assert_injected "$INJECT_JSON"
 
 echo "==> Verify running app changed without rebuild/relaunch: AFTER"
 wait_for_marker "AFTER" "$MARKER"
+
+echo "==> Modify Swift source in second xcodeproj without rebuilding app"
+python3 - "$FEATURE_SOURCE" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+old = '"FEATURE_BEFORE"'
+new = '"FEATURE_AFTER"'
+if old not in text:
+    raise SystemExit("FEATURE_BEFORE marker source was not found")
+path.write_text(text.replace(old, new, 1))
+PY
+
+echo "==> Inject Swift source from second xcodeproj"
+"$CTL" --socket "$SOCKET" inject "$FEATURE_SOURCE" |
+  tee "$FEATURE_INJECT_JSON"
+json_assert_injected "$FEATURE_INJECT_JSON"
+
+echo "==> Verify feature framework changed without rebuild/relaunch"
+wait_for_marker "FEATURE_AFTER" "$FEATURE_MARKER"
 
 echo "==> Verify InjectionNext screenshot command"
 "$CTL" --socket "$SOCKET" screenshot "$SCREENSHOT_PNG" |
@@ -717,6 +809,7 @@ echo "  mixed ObjC + Swift: yes"
 echo "  CocoaPods (Masonry): yes"
 echo "  runtime handshake: yes"
 echo "  Swift injection BEFORE -> AFTER: yes"
+echo "  multi-project Swift FEATURE_BEFORE -> FEATURE_AFTER: yes"
 echo "  screenshot: $SCREENSHOT_PNG"
 echo "  touch capture command: yes"
 echo "  touch replay -> UIApplication sendEvent: yes"
