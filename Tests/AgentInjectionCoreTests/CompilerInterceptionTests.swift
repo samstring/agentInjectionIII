@@ -79,6 +79,9 @@ final class CompilerInterceptionTests: XCTestCase {
         XCTAssertTrue(
             feeder.contains("frontend-commands.log")
         )
+        XCTAssertTrue(
+            feeder.contains("exec -a \"$tool\" \"$real\" \"$@\"")
+        )
 
         let swiftc = bin.appendingPathComponent(
             "swiftc"
@@ -87,7 +90,7 @@ final class CompilerInterceptionTests: XCTestCase {
             try FileManager.default.destinationOfSymbolicLink(
                 atPath: swiftc.path
             ),
-            "swift-frontend.save"
+            "swift-frontend"
         )
 
         switch manager.setEnabled(false) {
