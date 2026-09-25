@@ -2,7 +2,7 @@ import XCTest
 @testable import AgentInjectionCore
 
 final class BuildLogCompilerTests: XCTestCase {
-    func testSwiftRewriteKeepsOnlyRequestedPrimaryFile() {
+    func testSwiftRewriteKeepsOnlyRequestedPrimaryMarker() {
         let compiler = BuildLogCompiler()
         let source = "/repo/Sources/Foo.swift"
         let other = "/repo/Sources/Bar.swift"
@@ -26,7 +26,8 @@ final class BuildLogCompilerTests: XCTestCase {
         )
 
         XCTAssertTrue(rewritten.contains(" -primary-file \(source)"))
-        XCTAssertFalse(rewritten.contains(other))
+        XCTAssertTrue(rewritten.contains(" \(other)"))
+        XCTAssertFalse(rewritten.contains(" -primary-file \(other)"))
         XCTAssertFalse(rewritten.contains(output))
         XCTAssertTrue(rewritten.contains(" -o '/tmp/new.o'"))
         XCTAssertTrue(rewritten.contains(" -DDEBUG -DINJECTING"))
@@ -539,6 +540,34 @@ final class BuildLogCompilerTests: XCTestCase {
             command?.contains("E0157793") == true,
             command ?? "nil"
         )
+    }
+
+
+    func testSwiftRewriteDropsOtherPrimaryPathsWhenFilelistProvidesSources() {
+        let compiler = BuildLogCompiler()
+        let source = "/repo/Sources/Foo.swift"
+        let other = "/repo/Sources/Bar.swift"
+
+        let original = [
+            "/usr/bin/swift-frontend",
+            "-frontend",
+            "-c",
+            "-primary-file", source,
+            "-primary-file", other,
+            "-filelist", "/tmp/sources.txt",
+            "-target", "arm64-apple-ios18.0-simulator"
+        ].joined(separator: " ")
+
+        let rewritten = compiler.makeSingleFileCommand(
+            original: original,
+            source: source,
+            object: "/tmp/new.o"
+        )
+
+        XCTAssertTrue(rewritten.contains(" -primary-file \(source)"))
+        XCTAssertFalse(rewritten.contains(" -primary-file \(other)"))
+        XCTAssertFalse(rewritten.contains(" \(other)"))
+        XCTAssertTrue(rewritten.contains(" -filelist /tmp/sources.txt"))
     }
 
 }

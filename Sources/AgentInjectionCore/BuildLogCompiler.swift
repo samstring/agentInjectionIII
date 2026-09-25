@@ -1620,11 +1620,24 @@ public final class BuildLogCompiler {
             )
         }
 
-        command = replacingRegex(
-            " -primary-file \(quotedArgumentRegex)",
-            in: command,
-            with: " "
-        )
+        if command.contains(" -filelist ") {
+            // The file list already provides all secondary sources, so remove
+            // the other primary-file argument pairs entirely.
+            command = replacingRegex(
+                " -primary-file \(quotedArgumentRegex)",
+                in: command,
+                with: " "
+            )
+        } else {
+            // In Xcode batch mode there may be many -primary-file arguments.
+            // Only the requested source stays primary; demote the others to
+            // normal secondary sources so their declarations remain visible
+            // during type checking.
+            command = command.replacingOccurrences(
+                of: " -primary-file ",
+                with: " "
+            )
+        }
 
         command = command.replacingOccurrences(
             of: "-agent-primary",
