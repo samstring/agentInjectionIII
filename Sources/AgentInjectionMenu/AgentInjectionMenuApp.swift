@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Carbon
 import AgentInjectionCore
 
 @main
@@ -31,6 +32,12 @@ final class MenuStatusModel: ObservableObject {
         DiagnosticsResult?
     @Published private(set) var daemonStatus:
         DaemonStatus?
+    @Published private(set) var pendingChanges:
+        PendingChangesResult?
+    @Published private(set) var projectRoot:
+        String?
+    @Published private(set) var manualInjectionError:
+        String?
     @Published private(set) var connectionError:
         String?
     @Published private(set) var lastUpdated:
@@ -43,8 +50,12 @@ final class MenuStatusModel: ObservableObject {
     )
     private let daemonController: DaemonController
     private var timer: Timer?
+    private var hotKey: GlobalHotKey?
     private var started = false
     private var terminateObserver: NSObjectProtocol?
+
+    private static let projectRootDefaultsKey =
+        "AgentInjectionIII.projectRoot"
 
     init(
         socketPath: String =
@@ -52,9 +63,26 @@ final class MenuStatusModel: ObservableObject {
                 "AGENT_INJECTION_SOCKET"
             ] ?? "/tmp/agentInjectionIII.sock"
     ) {
+        let environment =
+            ProcessInfo.processInfo.environment
+        let selectedProject =
+            environment[
+                "AGENT_INJECTION_PROJECT_ROOT"
+            ].flatMap {
+                $0.isEmpty ? nil : $0
+            }
+            ?? UserDefaults.standard.string(
+                forKey:
+                    Self.projectRootDefaultsKey
+            )
+
         self.socketPath = socketPath
+        self.projectRoot = selectedProject
         self.daemonController =
-            DaemonController(socketPath: socketPath)
+            DaemonController(
+                socketPath: socketPath,
+                projectRoot: selectedProject
+            )
     }
 
     var statusTitle: String {
@@ -92,6 +120,16 @@ final class MenuStatusModel: ObservableObject {
         started = true
 
         daemonController.ensureRunning()
+
+        hotKey = GlobalHotKey(
+            keyCode: UInt32(kVK_ANSI_Minus),
+            modifiers: UInt32(controlKey)
+        ) { [weak self] in
+            Task { @MainActor in
+                self?.injectPendingChanges()
+            }
+        }
+
         refreshStatus()
 
         DispatchQueue.main.asyncAfter(
@@ -122,6 +160,7 @@ final class MenuStatusModel: ObservableObject {
     func shutdown() {
         timer?.invalidate()
         timer = nil
+        hotKey = nil
 
         if let terminateObserver {
             NotificationCenter.default.removeObserver(
@@ -139,13 +178,21 @@ final class MenuStatusModel: ObservableObject {
 
         worker.async { [weak self] in
             do {
-                let response = try UnixSocketClient(
+                let client = UnixSocketClient(
                     socketPath: socketPath
-                ).send(
+                )
+                let response = try client.send(
                     ControlRequest(
                         action: .status
                     )
                 )
+                let pendingResponse =
+                    try client.send(
+                        ControlRequest(
+                            action:
+                                .pendingChanges
+                        )
+                    )
 
                 guard let status =
                         response.status else {
@@ -156,8 +203,20 @@ final class MenuStatusModel: ObservableObject {
                     )
                 }
 
+                guard let pending =
+                        pendingResponse
+                            .pendingChanges else {
+                    throw MenuStatusError(
+                        message:
+                            pendingResponse.error?
+                                .message
+                            ?? "Daemon returned no pending-changes payload."
+                    )
+                }
+
                 DispatchQueue.main.async {
                     self?.daemonStatus = status
+                    self?.pendingChanges = pending
                     self?.connectionError = nil
                     self?.lastUpdated = Date()
                 }
@@ -166,11 +225,85 @@ final class MenuStatusModel: ObservableObject {
 
                 DispatchQueue.main.async {
                     self?.daemonStatus = nil
+                    self?.pendingChanges = nil
                     self?.connectionError =
                         String(describing: error)
                     self?.lastUpdated = Date()
                 }
             }
+        }
+    }
+
+    func injectPendingChanges() {
+        let socketPath = socketPath
+
+        worker.async { [weak self] in
+            do {
+                let response = try UnixSocketClient(
+                    socketPath: socketPath
+                ).send(
+                    ControlRequest(
+                        action: .injectPending
+                    )
+                )
+
+                DispatchQueue.main.async {
+                    self?.manualInjectionError =
+                        response.ok
+                        ? nil
+                        : response.error?.message
+                    self?.refreshStatus()
+                    self?.refreshDiagnostics()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.manualInjectionError =
+                        String(describing: error)
+                }
+            }
+        }
+    }
+
+    func chooseProject() {
+        let panel = NSOpenPanel()
+        panel.prompt = "Watch Project"
+        panel.message =
+            "Choose the project directory containing the sources AgentInjectionIII should watch."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+
+        if let projectRoot {
+            panel.directoryURL =
+                URL(fileURLWithPath: projectRoot)
+        }
+
+        guard panel.runModal() == .OK,
+              let url = panel.url else {
+            return
+        }
+
+        let selected =
+            url.standardizedFileURL.path
+        projectRoot = selected
+        pendingChanges = nil
+        manualInjectionError = nil
+
+        UserDefaults.standard.set(
+            selected,
+            forKey:
+                Self.projectRootDefaultsKey
+        )
+
+        daemonController.updateProjectRoot(
+            selected
+        )
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.75
+        ) { [weak self] in
+            self?.refreshStatus()
+            self?.refreshDiagnostics()
         }
     }
 
@@ -226,9 +359,14 @@ private final class DaemonController:
 
     private var ownedProcess: Process?
     private var logHandle: FileHandle?
+    private var projectRoot: String?
 
-    init(socketPath: String) {
+    init(
+        socketPath: String,
+        projectRoot: String?
+    ) {
         self.socketPath = socketPath
+        self.projectRoot = projectRoot
     }
 
     func ensureRunning() {
@@ -242,6 +380,55 @@ private final class DaemonController:
             if let process = self.ownedProcess,
                process.isRunning {
                 return
+            }
+
+            self.launchDaemon()
+        }
+    }
+
+    func updateProjectRoot(
+        _ projectRoot: String
+    ) {
+        queue.async { [weak self] in
+            guard let self else { return }
+
+            self.projectRoot =
+                URL(
+                    fileURLWithPath:
+                        projectRoot
+                )
+                .standardizedFileURL
+                .path
+
+            guard let process =
+                    self.ownedProcess else {
+                if !self.daemonResponds() {
+                    self.launchDaemon()
+                }
+                return
+            }
+
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+
+            if self.ownedProcess ===
+                process {
+                self.ownedProcess = nil
+            }
+            try? self.logHandle?.close()
+            self.logHandle = nil
+
+            if FileManager.default
+                .fileExists(
+                    atPath: self.socketPath
+                ) {
+                try? FileManager.default
+                    .removeItem(
+                        atPath:
+                            self.socketPath
+                    )
             }
 
             self.launchDaemon()
@@ -298,11 +485,16 @@ private final class DaemonController:
         let environment =
             ProcessInfo.processInfo.environment
 
-        if let projectRoot =
+        let environmentProject =
             environment[
                 "AGENT_INJECTION_PROJECT_ROOT"
-            ],
-           !projectRoot.isEmpty {
+            ].flatMap {
+                $0.isEmpty ? nil : $0
+            }
+
+        if let projectRoot =
+            environmentProject
+            ?? self.projectRoot {
             arguments += [
                 "--project", projectRoot
             ]
@@ -478,6 +670,97 @@ private final class DaemonController:
     }
 }
 
+private final class GlobalHotKey {
+    private var hotKeyRef:
+        EventHotKeyRef?
+    private var handlerRef:
+        EventHandlerRef?
+    private let action: () -> Void
+
+    init?(
+        keyCode: UInt32,
+        modifiers: UInt32,
+        action: @escaping () -> Void
+    ) {
+        self.action = action
+
+        var eventType = EventTypeSpec(
+            eventClass:
+                OSType(kEventClassKeyboard),
+            eventKind:
+                UInt32(kEventHotKeyPressed)
+        )
+
+        let installStatus =
+            InstallEventHandler(
+                GetApplicationEventTarget(),
+                { _, _, userData in
+                    guard let userData else {
+                        return noErr
+                    }
+
+                    let hotKey =
+                        Unmanaged<GlobalHotKey>
+                            .fromOpaque(
+                                userData
+                            )
+                            .takeUnretainedValue()
+                    hotKey.action()
+                    return noErr
+                },
+                1,
+                &eventType,
+                Unmanaged
+                    .passUnretained(self)
+                    .toOpaque(),
+                &handlerRef
+            )
+
+        guard installStatus == noErr else {
+            return nil
+        }
+
+        var identifier = EventHotKeyID(
+            signature:
+                OSType(0x4147494E),
+            id: 1
+        )
+
+        let registerStatus =
+            RegisterEventHotKey(
+                keyCode,
+                modifiers,
+                identifier,
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRef
+            )
+
+        guard registerStatus == noErr else {
+            if let handlerRef {
+                RemoveEventHandler(
+                    handlerRef
+                )
+            }
+            self.handlerRef = nil
+            return nil
+        }
+    }
+
+    deinit {
+        if let hotKeyRef {
+            UnregisterEventHotKey(
+                hotKeyRef
+            )
+        }
+        if let handlerRef {
+            RemoveEventHandler(
+                handlerRef
+            )
+        }
+    }
+}
+
 private struct MenuStatusError:
     Error,
     CustomStringConvertible {
@@ -511,6 +794,96 @@ private struct StatusMenuView: View {
                     )
                 }
                 .buttonStyle(.borderless)
+            }
+
+            Divider()
+
+            HStack {
+                Text("Project")
+                Spacer()
+                Text(
+                    model.pendingChanges?
+                        .projectRoot
+                        .map {
+                            URL(
+                                fileURLWithPath: $0
+                            )
+                            .lastPathComponent
+                        }
+                    ?? model.projectRoot
+                        .map {
+                            URL(
+                                fileURLWithPath: $0
+                            )
+                            .lastPathComponent
+                        }
+                    ?? "Not selected"
+                )
+                .foregroundStyle(.secondary)
+
+                Button("Choose…") {
+                    model.chooseProject()
+                }
+            }
+
+            if let pending =
+                model.pendingChanges {
+                HStack {
+                    Text("Pending Changes")
+                    Spacer()
+                    Text(
+                        "\(pending.files.count)"
+                    )
+                    .foregroundStyle(.secondary)
+                }
+
+                ForEach(
+                    Array(
+                        pending.files
+                            .suffix(5)
+                    ),
+                    id: \.self
+                ) { file in
+                    Text(
+                        URL(
+                            fileURLWithPath:
+                                file
+                        )
+                        .lastPathComponent
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
+
+                Button(
+                    "Inject Changed Files"
+                ) {
+                    model.injectPendingChanges()
+                }
+                .keyboardShortcut(
+                    "-",
+                    modifiers: [.control]
+                )
+                .disabled(
+                    pending.files.isEmpty
+                )
+
+                Text(
+                    pending.watching
+                        ? "Global shortcut: Control + -"
+                        : "Choose a project to enable file watching."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
+            if let error =
+                model.manualInjectionError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
 
             if let error = model.connectionError {
