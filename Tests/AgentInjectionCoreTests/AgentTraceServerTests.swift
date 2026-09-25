@@ -22,7 +22,89 @@ final class AgentTraceServerTests: XCTestCase {
             port: port,
             host: host
         )
+        try Self.sendHello(fd: fd)
+
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline &&
+              !server.status().connected {
+            usleep(10_000)
+        }
+
+        XCTAssertTrue(server.status().connected)
         Darwin.close(fd)
+    }
+
+    func testConnectionWithoutValidHelloIsRejected() throws {
+        let port = UInt16(
+            20_000 + Int(getpid()) % 1_000
+        )
+        let server = AgentTraceServer(port: port)
+        try server.start()
+
+        let fd = try Self.connect(port: port)
+        defer { Darwin.close(fd) }
+
+        var data = Data(
+            #"{"type":"hello","protocol":999}"#.utf8
+        )
+        data.append(0x0A)
+        try Self.writeAll(data, fd: fd)
+
+        usleep(100_000)
+        XCTAssertFalse(server.status().connected)
+    }
+
+    func testSecondConnectionCannotReplaceActiveBridge() throws {
+        let port = UInt16(
+            21_000 + Int(getpid()) % 1_000
+        )
+        let server = AgentTraceServer(port: port)
+        try server.start()
+
+        let first = try Self.connect(port: port)
+        defer { Darwin.close(first) }
+        try Self.sendHello(fd: first)
+
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline &&
+              !server.status().connected {
+            usleep(10_000)
+        }
+        XCTAssertTrue(server.status().connected)
+
+        let second = try Self.connect(port: port)
+        defer { Darwin.close(second) }
+        try Self.sendHello(fd: second)
+
+        usleep(100_000)
+        XCTAssertTrue(server.status().connected)
+
+        let payload: [String: Any] = [
+            "type": "test_result",
+            "timestamp":
+                Date.timeIntervalSinceReferenceDate,
+            "testName":
+                "InjectedTests.testActiveBridge",
+            "passed": true,
+            "failures": 0,
+            "messages": []
+        ]
+        var data = try JSONSerialization.data(
+            withJSONObject: payload
+        )
+        data.append(0x0A)
+        try Self.writeAll(data, fd: first)
+
+        let resultDeadline = Date().addingTimeInterval(2)
+        while Date() < resultDeadline &&
+              server.injectedTestResults().results.isEmpty {
+            usleep(10_000)
+        }
+
+        XCTAssertEqual(
+            server.injectedTestResults().results.first?.name,
+            "InjectedTests.testActiveBridge"
+        )
     }
 
     func testInjectedXCTestResultIsBuffered() throws {
@@ -38,6 +120,7 @@ final class AgentTraceServerTests: XCTestCase {
             port: port
         )
         defer { Darwin.close(fd) }
+        try Self.sendHello(fd: fd)
 
         let payload: [String: Any] = [
             "type": "test_result",
@@ -205,6 +288,16 @@ final class AgentTraceServerTests: XCTestCase {
                     "connect failed: \(lastError)"
             ]
         )
+    }
+
+    private static func sendHello(
+        fd: Int32
+    ) throws {
+        var data = Data(
+            #"{"type":"hello","protocol":1}"#.utf8
+        )
+        data.append(0x0A)
+        try writeAll(data, fd: fd)
     }
 
     private static func writeAll(

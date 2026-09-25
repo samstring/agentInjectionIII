@@ -229,6 +229,7 @@ static BOOL AgentTraceOutputInstalled = NO;
 
     [self sendJSONObject:@{
         @"type": @"hello",
+        @"protocol": @1,
         @"timestamp": @([NSDate timeIntervalSinceReferenceDate])
     }];
 

@@ -1107,7 +1107,15 @@ public final class AgentTraceServer {
                 }
             )
 
+            guard bridge.validateHello() else {
+                continue
+            }
+
             lock.lock()
+            guard client == nil else {
+                lock.unlock()
+                continue
+            }
             client = bridge
             lock.unlock()
 
@@ -1463,7 +1471,33 @@ private final class PendingTraceCommand {
 
 private struct TraceBridgeMessage: Decodable {
     let type: String
+    let protocolVersion: Int?
     let timestamp: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case protocolVersion = "protocol"
+        case timestamp
+        case text
+        case indent
+        case state
+        case error
+        case elapsed
+        case invocations
+        case signatures
+        case counts
+        case testName
+        case passed
+        case failures
+        case durationSeconds
+        case messages
+        case available
+        case objects
+        case selected
+        case details
+        case objectID
+        case succeeded
+    }
     let text: String?
     let indent: Int?
     let state: String?
@@ -1509,6 +1543,80 @@ private final class TraceBridgeClient {
 
     deinit {
         Darwin.close(fd)
+    }
+
+    func validateHello() -> Bool {
+        var timeout = timeval(
+            tv_sec: 2,
+            tv_usec: 0
+        )
+        _ = withUnsafePointer(to: &timeout) {
+            setsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_RCVTIMEO,
+                $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+        defer {
+            var disabled = timeval(
+                tv_sec: 0,
+                tv_usec: 0
+            )
+            _ = withUnsafePointer(to: &disabled) {
+                setsockopt(
+                    fd,
+                    SOL_SOCKET,
+                    SO_RCVTIMEO,
+                    $0,
+                    socklen_t(MemoryLayout<timeval>.size)
+                )
+            }
+        }
+
+        var buffer = Data()
+        var bytes = [UInt8](
+            repeating: 0,
+            count: 1024
+        )
+
+        while buffer.count <= 64 * 1024 {
+            let count = bytes.withUnsafeMutableBytes {
+                Darwin.read(
+                    fd,
+                    $0.baseAddress,
+                    $0.count
+                )
+            }
+
+            if count < 0 {
+                if errno == EINTR { continue }
+                return false
+            }
+            if count == 0 {
+                return false
+            }
+
+            buffer.append(contentsOf: bytes[0..<count])
+
+            guard let newline = buffer.firstIndex(of: 0x0A) else {
+                continue
+            }
+
+            let line = Data(buffer[..<newline])
+            guard let message = try? JSONDecoder().decode(
+                TraceBridgeMessage.self,
+                from: line
+            ) else {
+                return false
+            }
+
+            return message.type == "hello" &&
+                message.protocolVersion == 1
+        }
+
+        return false
     }
 
     func run() {
