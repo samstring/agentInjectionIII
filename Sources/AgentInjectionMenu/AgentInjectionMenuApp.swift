@@ -175,6 +175,7 @@ final class MenuStatusModel: ObservableObject {
     func refreshStatus() {
         let socketPath = socketPath
         let daemonController = daemonController
+        daemonController.refreshCodeSigningIdentity()
 
         worker.async { [weak self] in
             do {
@@ -360,6 +361,10 @@ private final class DaemonController:
     private var ownedProcess: Process?
     private var logHandle: FileHandle?
     private var projectRoot: String?
+    private var ownedCodeSignIdentity: String?
+
+    private static let signingDefaultsDomain =
+        "com.agentInjectionIII"
 
     init(
         socketPath: String,
@@ -416,6 +421,7 @@ private final class DaemonController:
             if self.ownedProcess ===
                 process {
                 self.ownedProcess = nil
+                self.ownedCodeSignIdentity = nil
             }
             try? self.logHandle?.close()
             self.logHandle = nil
@@ -435,6 +441,34 @@ private final class DaemonController:
         }
     }
 
+    func refreshCodeSigningIdentity() {
+        queue.async { [weak self] in
+            guard let self,
+                  let process = self.ownedProcess,
+                  process.isRunning else {
+                return
+            }
+
+            let identity = self.resolveCodeSignIdentity()
+            guard identity != self.ownedCodeSignIdentity else {
+                return
+            }
+
+            process.terminate()
+            process.waitUntilExit()
+            guard self.ownedProcess === process else {
+                return
+            }
+
+            self.ownedProcess = nil
+            self.ownedCodeSignIdentity = nil
+            try? self.logHandle?.close()
+            self.logHandle = nil
+            self.removeStaleSocket()
+            self.launchDaemon()
+        }
+    }
+
     func stopOwnedDaemon() {
         queue.sync {
             if let process = ownedProcess,
@@ -443,6 +477,7 @@ private final class DaemonController:
             }
 
             ownedProcess = nil
+            ownedCodeSignIdentity = nil
             try? logHandle?.close()
             logHandle = nil
         }
@@ -481,6 +516,12 @@ private final class DaemonController:
             "--socket", socketPath,
             "--enable-devices"
         ]
+        let codeSignIdentity = resolveCodeSignIdentity()
+        if let codeSignIdentity {
+            arguments += [
+                "--codesign-identity", codeSignIdentity
+            ]
+        }
 
         let environment =
             ProcessInfo.processInfo.environment
@@ -539,6 +580,7 @@ private final class DaemonController:
             self.queue.async {
                 if self.ownedProcess === process {
                     self.ownedProcess = nil
+                    self.ownedCodeSignIdentity = nil
                     try? self.logHandle?.close()
                     self.logHandle = nil
                 }
@@ -548,11 +590,58 @@ private final class DaemonController:
         do {
             try process.run()
             ownedProcess = process
+            ownedCodeSignIdentity = codeSignIdentity
         } catch {
             try? logHandle?.close()
             logHandle = nil
             ownedProcess = nil
+            ownedCodeSignIdentity = nil
         }
+    }
+
+    private func resolveCodeSignIdentity() -> String? {
+        guard let projectRoot else { return nil }
+
+        let rootURL = URL(
+            fileURLWithPath: projectRoot
+        ).standardizedFileURL
+        let projectFiles = (try? FileManager.default
+            .contentsOfDirectory(
+                at: rootURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ))?.filter {
+                $0.pathExtension == "xcodeproj"
+            } ?? []
+
+        guard projectFiles.count == 1,
+              let rawIdentity = UserDefaults(
+                suiteName: Self.signingDefaultsDomain
+              )?.string(
+                forKey: projectFiles[0]
+                    .standardizedFileURL.path
+              ) else {
+            return nil
+        }
+
+        let identity = rawIdentity.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !identity.isEmpty, identity != "-" else {
+            return nil
+        }
+        return identity
+    }
+
+    private func removeStaleSocket() {
+        guard FileManager.default.fileExists(
+            atPath: socketPath
+        ) else {
+            return
+        }
+        try? FileManager.default.removeItem(
+            atPath: socketPath
+        )
     }
 
     private func resolveDaemonURL() -> URL? {
