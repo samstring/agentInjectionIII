@@ -517,4 +517,28 @@ final class BuildLogCompilerTests: XCTestCase {
         )
     }
 
+
+    func testExtractCompilerCommandDropsActivityLogBinaryPrefix() {
+        let compiler = BuildLogCompiler()
+        let line =
+            #"36"E0157793-A8F7-4E97-B0F9-DB3C3B287B71-66"0262356(20738"/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c -primary-file /tmp/SmokeFeature.swift -target arm64-apple-ios16.0-simulator"#
+
+        let command = compiler.extractCompilerCommand(
+            from: line,
+            swift: true
+        )
+
+        XCTAssertNotNil(command)
+        XCTAssertTrue(
+            command?.hasPrefix(
+                "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend"
+            ) == true,
+            command ?? "nil"
+        )
+        XCTAssertFalse(
+            command?.contains("E0157793") == true,
+            command ?? "nil"
+        )
+    }
+
 }

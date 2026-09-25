@@ -1484,7 +1484,7 @@ public final class BuildLogCompiler {
             .map(\.0)
     }
 
-    private func extractCompilerCommand(
+    func extractCompilerCommand(
         from line: String,
         swift: Bool
     ) -> String? {
@@ -1543,7 +1543,19 @@ public final class BuildLogCompiler {
         var index = range.lowerBound
         while index > line.startIndex {
             let previous = line.index(before: index)
-            if line[previous].isWhitespace {
+            let character = line[previous]
+            let isControlBoundary = character.unicodeScalars.allSatisfy {
+                $0.value < 0x20 || $0.value == 0x7f
+            }
+
+            // .xcactivitylog is a structured/binary log. Compiler command
+            // strings can be immediately preceded by serialization bytes or
+            // a quote without any whitespace. Do not let that prefix become
+            // part of the executable token.
+            if character.isWhitespace ||
+               character == "\"" ||
+               character == "'" ||
+               isControlBoundary {
                 break
             }
             index = previous
