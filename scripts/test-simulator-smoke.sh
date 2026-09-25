@@ -17,6 +17,8 @@ FEATURE_BUILD_LOG="$ARTIFACTS/feature-xcodebuild.log"
 STATUS_JSON="$ARTIFACTS/status.json"
 INJECT_JSON="$ARTIFACTS/inject.json"
 FEATURE_INJECT_JSON="$ARTIFACTS/feature-inject.json"
+FEATURE_DOCTOR_BEFORE_JSON="$ARTIFACTS/feature-doctor-before.json"
+FEATURE_DOCTOR_AFTER_MAIN_JSON="$ARTIFACTS/feature-doctor-after-main.json"
 SCREENSHOT_JSON="$ARTIFACTS/screenshot.json"
 SCREENSHOT_PNG="$ARTIFACTS/after.png"
 TOUCH_CAPTURE_JSON="$ARTIFACTS/touch-capture.json"
@@ -34,7 +36,9 @@ INSTANCES_STOP_JSON="$ARTIFACTS/instances-stop.json"
 mkdir -p "$ARTIFACTS"
 rm -rf "$DERIVED"
 rm -f "$SOCKET" "$DAEMON_LOG" "$BUILD_LOG" "$FEATURE_BUILD_LOG" \
-  "$STATUS_JSON" "$INJECT_JSON" "$FEATURE_INJECT_JSON" "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
+  "$STATUS_JSON" "$INJECT_JSON" "$FEATURE_INJECT_JSON" \
+  "$FEATURE_DOCTOR_BEFORE_JSON" "$FEATURE_DOCTOR_AFTER_MAIN_JSON" \
+  "$SCREENSHOT_JSON" "$SCREENSHOT_PNG" \
   "$TOUCH_CAPTURE_JSON" "$TOUCH_EVENTS_JSON" "$TOUCH_REPLAY_JSON" \
   "$TRACE_START_JSON" "$TRACE_READ_JSON" "$TRACE_STOP_JSON" \
   "$PROFILE_JSON" "$CALL_ORDER_JSON" \
@@ -331,6 +335,8 @@ print(
 )
 PY
 
+cp "$FRONTEND_LOG" "$ARTIFACTS/frontend-commands.log"
+
 APP="$DERIVED/Build/Products/Debug-iphonesimulator/SimulatorSmokeApp.app"
 if [ ! -d "$APP" ]; then
   echo "Built app not found: $APP" >&2
@@ -411,6 +417,10 @@ TOUCH_TARGET="$DATA_CONTAINER/Documents/agentInjection-touch-target.json"
 TOUCH_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch.txt"
 TOUCH_EVENT_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch-event.txt"
 
+echo "==> Diagnose second-project compiler context before injection"
+"$CTL" --socket "$SOCKET" doctor "$FEATURE_SOURCE" |
+  tee "$FEATURE_DOCTOR_BEFORE_JSON"
+
 echo "==> Verify initial Swift behavior: BEFORE"
 wait_for_marker "BEFORE" "$MARKER"
 
@@ -445,6 +455,11 @@ assert_no_standalone_watcher "$INJECT_JSON"
 
 echo "==> Verify running app changed without rebuild/relaunch: AFTER"
 wait_for_marker "AFTER" "$MARKER"
+
+echo "==> Diagnose second-project compiler context after main injection"
+"$CTL" --socket "$SOCKET" doctor "$FEATURE_SOURCE" |
+  tee "$FEATURE_DOCTOR_AFTER_MAIN_JSON"
+cp "$HOME/.agentInjectionIII/cache/compile-commands.json"   "$ARTIFACTS/compile-commands.json" 2>/dev/null || true
 
 echo "==> Modify Swift source in second xcodeproj without rebuilding app"
 python3 - "$FEATURE_SOURCE" <<'PY'
