@@ -37,8 +37,14 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "AgentInjectionHostShim",
+            path: "HostShim",
+            publicHeadersPath: "."
+        ),
+        .target(
             name: "AgentInjectionCore",
             dependencies: [
+                "AgentInjectionHostShim",
                 .product(
                     name: "InjectionImpl",
                     package: "InjectionLite"
