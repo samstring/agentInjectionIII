@@ -1532,6 +1532,7 @@ private final class TraceBridgeClient {
     private let fd: Int32
     private let writeLock = NSLock()
     private let onEvent: (TraceBridgeMessage) -> Void
+    private var initialBuffer = Data()
 
     init(
         fd: Int32,
@@ -1605,6 +1606,11 @@ private final class TraceBridgeClient {
             }
 
             let line = Data(buffer[..<newline])
+            let remainderStart = buffer.index(after: newline)
+            if remainderStart < buffer.endIndex {
+                initialBuffer = Data(buffer[remainderStart...])
+            }
+
             guard let message = try? JSONDecoder().decode(
                 TraceBridgeMessage.self,
                 from: line
@@ -1620,7 +1626,10 @@ private final class TraceBridgeClient {
     }
 
     func run() {
-        var buffer = Data()
+        var buffer = initialBuffer
+        initialBuffer.removeAll(
+            keepingCapacity: false
+        )
         var bytes = [UInt8](
             repeating: 0,
             count: 4096
