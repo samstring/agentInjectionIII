@@ -527,7 +527,7 @@ private final class InjectionRuntimeClient {
                     fileURLWithPath: tmpPath
                 )
                 .appendingPathComponent(
-                    "agent_injection_\(UUID().uuidString).dylib"
+                    "eval_injection_\(UUID().uuidString).dylib"
                 )
 
                 try FileManager.default.copyItem(
