@@ -53,7 +53,14 @@ final class BuildLogCompilerTests: XCTestCase {
             rewritten.contains("-primary-file \"\(source)\""),
             rewritten
         )
-        XCTAssertFalse(rewritten.contains(other), rewritten)
+        XCTAssertTrue(
+            rewritten.contains("\"\(other)\""),
+            rewritten
+        )
+        XCTAssertFalse(
+            rewritten.contains("-primary-file \"\(other)\""),
+            rewritten
+        )
         XCTAssertFalse(rewritten.contains("old output.o"), rewritten)
         XCTAssertTrue(
             rewritten.contains("-o '/tmp/new output.o'"),
