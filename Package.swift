@@ -66,11 +66,17 @@ let package = Package(
         ),
         .executableTarget(
             name: "injectiond",
-            dependencies: ["AgentInjectionCore"]
+            dependencies: [
+                "AgentInjectionCore",
+                "AgentInjectionHostShim"
+            ]
         ),
         .executableTarget(
             name: "injectionctl",
-            dependencies: ["AgentInjectionCore"]
+            dependencies: [
+                "AgentInjectionCore",
+                "AgentInjectionHostShim"
+            ]
         ),
         .testTarget(
             name: "AgentInjectionCoreTests",
