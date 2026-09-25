@@ -14,6 +14,8 @@ public protocol InjectionBackend: AnyObject {
     var name: String { get }
     func status() -> BackendStatus
     func targets() -> TargetsResult
+    func pendingChanges() -> PendingChangesResult
+    func injectPending(target: String?) -> BackendInjectionResponse
     func inject(files: [String], target: String?) -> BackendInjectionResponse
     func loadDylib(path: String, target: String?) -> BackendInjectionResponse
     func doctor(path: String?) -> DoctorReport
@@ -99,6 +101,26 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
 
     public func targets() -> TargetsResult {
         TargetsResult(targets: [])
+    }
+
+    public func pendingChanges() -> PendingChangesResult {
+        PendingChangesResult(
+            projectRoot: projectRoot,
+            watching: projectRoot != nil,
+            files: []
+        )
+    }
+
+    public func injectPending(
+        target: String?
+    ) -> BackendInjectionResponse {
+        BackendInjectionResponse(
+            results: [],
+            error: ControlError(
+                code: "BACKEND_NOT_READY",
+                message: "Scaffold backend cannot inject pending changes."
+            )
+        )
     }
 
     public func inject(

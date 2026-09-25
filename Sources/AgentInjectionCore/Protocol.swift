@@ -3,6 +3,8 @@ import Foundation
 public enum ControlAction: String, Codable, Sendable {
     case status
     case inject
+    case pendingChanges = "pending_changes"
+    case injectPending = "inject_pending"
     case loadDylib = "load_dylib"
     case doctor
     case diagnostics
@@ -284,6 +286,22 @@ public struct TargetsResult: Codable, Sendable {
 
     public init(targets: [RuntimeTarget]) {
         self.targets = targets
+    }
+}
+
+public struct PendingChangesResult: Codable, Sendable {
+    public let projectRoot: String?
+    public let watching: Bool
+    public let files: [String]
+
+    public init(
+        projectRoot: String?,
+        watching: Bool,
+        files: [String]
+    ) {
+        self.projectRoot = projectRoot
+        self.watching = watching
+        self.files = files
     }
 }
 
@@ -672,6 +690,7 @@ public struct ControlResponse: Codable, Sendable {
     public let ok: Bool
     public let status: DaemonStatus?
     public let injections: [InjectionResult]?
+    public let pendingChanges: PendingChangesResult?
     public let doctor: DoctorReport?
     public let diagnostics: DiagnosticsResult?
     public let screenshot: ScreenshotResult?
@@ -697,6 +716,7 @@ public struct ControlResponse: Codable, Sendable {
         ok: Bool,
         status: DaemonStatus? = nil,
         injections: [InjectionResult]? = nil,
+        pendingChanges: PendingChangesResult? = nil,
         doctor: DoctorReport? = nil,
         diagnostics: DiagnosticsResult? = nil,
         screenshot: ScreenshotResult? = nil,
@@ -721,6 +741,7 @@ public struct ControlResponse: Codable, Sendable {
         self.ok = ok
         self.status = status
         self.injections = injections
+        self.pendingChanges = pendingChanges
         self.doctor = doctor
         self.diagnostics = diagnostics
         self.screenshot = screenshot
@@ -756,6 +777,17 @@ public struct ControlResponse: Codable, Sendable {
             ok: error == nil,
             injections: results,
             error: error
+        )
+    }
+
+    public static func pendingChanges(
+        id: String,
+        result: PendingChangesResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            pendingChanges: result
         )
     }
 

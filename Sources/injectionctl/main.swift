@@ -49,6 +49,8 @@ private func printUsage() {
     usage:
       injectionctl [--socket PATH] targets
       injectionctl [--socket PATH] [--target ID] status
+      injectionctl [--socket PATH] pending
+      injectionctl [--socket PATH] [--target ID] inject-pending
       injectionctl [--socket PATH] [--target ID] inject FILE [FILE ...]
       injectionctl [--socket PATH] [--target ID] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
@@ -153,6 +155,23 @@ case "status":
     }
     request = ControlRequest(
         action: .status,
+        target: options.target
+    )
+
+case "pending":
+    guard options.arguments.count == 1 else {
+        fatalUsage("pending does not accept positional arguments.")
+    }
+    request = ControlRequest(
+        action: .pendingChanges
+    )
+
+case "inject-pending":
+    guard options.arguments.count == 1 else {
+        fatalUsage("inject-pending does not accept positional arguments.")
+    }
+    request = ControlRequest(
+        action: .injectPending,
         target: options.target
     )
 

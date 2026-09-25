@@ -125,6 +125,28 @@ server.tool(
 );
 
 server.tool(
+  "get_pending_changes",
+  "List source files recorded by the project watcher and waiting for explicit injection",
+  {},
+  async () =>
+    call(
+      "pending_changes"
+    )
+);
+
+server.tool(
+  "inject_pending_changes",
+  "Inject all source files currently recorded by the project watcher; successful files are removed while failed files remain pending",
+  { target },
+  async ({ target }) =>
+    call(
+      "inject_pending",
+      { target },
+      60000
+    )
+);
+
+server.tool(
   "inject_sources",
   "Compile and hot-inject changed Swift/Objective-C sources into the running app",
   {
