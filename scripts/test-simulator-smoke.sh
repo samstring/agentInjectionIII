@@ -418,8 +418,12 @@ TOUCH_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch.txt"
 TOUCH_EVENT_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch-event.txt"
 
 echo "==> Diagnose second-project compiler context before injection"
+set +e
 "$CTL" --socket "$SOCKET" doctor "$FEATURE_SOURCE" |
   tee "$FEATURE_DOCTOR_BEFORE_JSON"
+FEATURE_DOCTOR_BEFORE_STATUS=${PIPESTATUS[0]}
+set -e
+echo "Feature doctor before status: $FEATURE_DOCTOR_BEFORE_STATUS"
 
 echo "==> Verify initial Swift behavior: BEFORE"
 wait_for_marker "BEFORE" "$MARKER"
