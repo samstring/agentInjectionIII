@@ -212,6 +212,13 @@ static BOOL AgentTraceOutputInstalled = NO;
 
     AgentTraceSocket = socketFD;
 
+    // The server validates the first frame before accepting this bridge.
+    [self sendJSONObject:@{
+        @"type": @"hello",
+        @"protocol": @1,
+        @"timestamp": @([NSDate timeIntervalSinceReferenceDate])
+    }];
+
     [self installSwiftTraceOutput];
 
     dispatch_async(
@@ -226,11 +233,6 @@ static BOOL AgentTraceOutputInstalled = NO;
             }
         }
     );
-
-    [self sendJSONObject:@{
-        @"type": @"hello",
-        @"timestamp": @([NSDate timeIntervalSinceReferenceDate])
-    }];
 
     [self readCommandLoop:socketFD];
 

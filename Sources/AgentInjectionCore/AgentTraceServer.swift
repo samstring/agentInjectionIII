@@ -8,6 +8,8 @@ import Darwin
 /// connects to this server and forwards SwiftTrace.logOutput as JSON lines.
 public final class AgentTraceServer {
     public let port: UInt16
+    private let devicesEnabled: Bool
+    private let logStore: AgentLogStore?
 
     private let queue = DispatchQueue(
         label: "agentInjectionIII.trace-server",
@@ -34,8 +36,14 @@ public final class AgentTraceServer {
     private let maximumBufferedEvents = 10_000
     private let maximumBufferedTestResults = 1_000
 
-    public init(port: UInt16 = 8888) {
+    public init(
+        port: UInt16 = 8888,
+        devicesEnabled: Bool = false,
+        logStore: AgentLogStore? = nil
+    ) {
         self.port = port
+        self.devicesEnabled = devicesEnabled
+        self.logStore = logStore
     }
 
     deinit {
@@ -80,7 +88,9 @@ public final class AgentTraceServer {
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = port.bigEndian
         address.sin_addr = in_addr(
-            s_addr: inet_addr("127.0.0.1")
+            s_addr: devicesEnabled
+                ? UInt32(INADDR_ANY).bigEndian
+                : inet_addr("127.0.0.1")
         )
 
         let bindResult = withUnsafePointer(to: &address) {
@@ -98,9 +108,10 @@ public final class AgentTraceServer {
 
         guard bindResult == 0 else {
             Darwin.close(fd)
+            let host = devicesEnabled ? "0.0.0.0" : "127.0.0.1"
             throw ControlError(
                 code: "TRACE_BIND_FAILED",
-                message: "Unable to bind 127.0.0.1:\(port): \(String(cString: strerror(errno)))"
+                message: "Unable to bind \(host):\(port): \(String(cString: strerror(errno)))"
             )
         }
 
@@ -113,6 +124,10 @@ public final class AgentTraceServer {
         }
 
         listenerFD = fd
+
+        logStore?.append(
+            "Trace listener started on \(devicesEnabled ? "0.0.0.0" : "127.0.0.1"):\(port)."
+        )
 
         queue.async { [weak self] in
             self?.acceptLoop()
@@ -1099,9 +1114,29 @@ public final class AgentTraceServer {
                 }
             )
 
+            guard bridge.validateHello() else {
+                logStore?.append(
+                    "Rejected trace bridge connection: invalid or unsupported hello.",
+                    level: "warning"
+                )
+                continue
+            }
+
             lock.lock()
+            guard client == nil else {
+                lock.unlock()
+                logStore?.append(
+                    "Rejected trace bridge connection: another bridge is already active.",
+                    level: "warning"
+                )
+                continue
+            }
             client = bridge
             lock.unlock()
+
+            logStore?.append(
+                "Trace bridge connected."
+            )
 
             queue.async { [weak self, weak bridge] in
                 guard let self, let bridge else { return }
@@ -1143,6 +1178,10 @@ public final class AgentTraceServer {
                         eval.semaphore.signal()
                     }
                     self.lifetimeActive = false
+                    self.logStore?.append(
+                        "Trace bridge disconnected.",
+                        level: "warning"
+                    )
                 }
                 self.lock.unlock()
             }
@@ -1455,7 +1494,33 @@ private final class PendingTraceCommand {
 
 private struct TraceBridgeMessage: Decodable {
     let type: String
+    let protocolVersion: Int?
     let timestamp: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case protocolVersion = "protocol"
+        case timestamp
+        case text
+        case indent
+        case state
+        case error
+        case elapsed
+        case invocations
+        case signatures
+        case counts
+        case testName
+        case passed
+        case failures
+        case durationSeconds
+        case messages
+        case available
+        case objects
+        case selected
+        case details
+        case objectID
+        case succeeded
+    }
     let text: String?
     let indent: Int?
     let state: String?
@@ -1490,6 +1555,7 @@ private final class TraceBridgeClient {
     private let fd: Int32
     private let writeLock = NSLock()
     private let onEvent: (TraceBridgeMessage) -> Void
+    private var initialBuffer = Data()
 
     init(
         fd: Int32,
@@ -1503,14 +1569,111 @@ private final class TraceBridgeClient {
         Darwin.close(fd)
     }
 
-    func run() {
+    func validateHello() -> Bool {
+        var timeout = timeval(
+            tv_sec: 2,
+            tv_usec: 0
+        )
+        _ = withUnsafePointer(to: &timeout) {
+            setsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_RCVTIMEO,
+                $0,
+                socklen_t(MemoryLayout<timeval>.size)
+            )
+        }
+        defer {
+            var disabled = timeval(
+                tv_sec: 0,
+                tv_usec: 0
+            )
+            _ = withUnsafePointer(to: &disabled) {
+                setsockopt(
+                    fd,
+                    SOL_SOCKET,
+                    SO_RCVTIMEO,
+                    $0,
+                    socklen_t(MemoryLayout<timeval>.size)
+                )
+            }
+        }
+
         var buffer = Data()
+        var bytes = [UInt8](
+            repeating: 0,
+            count: 1024
+        )
+
+        while buffer.count <= 64 * 1024 {
+            let count = bytes.withUnsafeMutableBytes {
+                Darwin.read(
+                    fd,
+                    $0.baseAddress,
+                    $0.count
+                )
+            }
+
+            if count < 0 {
+                if errno == EINTR { continue }
+                return false
+            }
+            if count == 0 {
+                return false
+            }
+
+            buffer.append(contentsOf: bytes[0..<count])
+
+            guard let newline = buffer.firstIndex(of: 0x0A) else {
+                continue
+            }
+
+            let line = Data(buffer[..<newline])
+            let remainderStart = buffer.index(after: newline)
+            if remainderStart < buffer.endIndex {
+                initialBuffer = Data(buffer[remainderStart...])
+            }
+
+            guard let message = try? JSONDecoder().decode(
+                TraceBridgeMessage.self,
+                from: line
+            ) else {
+                return false
+            }
+
+            return message.type == "hello" &&
+                message.protocolVersion == 1
+        }
+
+        return false
+    }
+
+    func run() {
+        var buffer = initialBuffer
+        initialBuffer.removeAll(
+            keepingCapacity: false
+        )
         var bytes = [UInt8](
             repeating: 0,
             count: 4096
         )
 
         while true {
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                let line = Data(buffer[..<newline])
+                buffer.removeSubrange(...newline)
+
+                guard !line.isEmpty,
+                      let message = try? JSONDecoder().decode(
+                        TraceBridgeMessage.self,
+                        from: line
+                      ) else {
+                    continue
+                }
+
+                onEvent(message)
+            }
+
             let count = bytes.withUnsafeMutableBytes {
                 Darwin.read(
                     fd,

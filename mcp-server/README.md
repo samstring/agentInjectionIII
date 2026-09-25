@@ -1,4 +1,4 @@
-# agentInjectionIII MCP Server
+# AgentInjectionIII MCP Server
 
 This is a thin MCP adapter over the existing
 `injectiond` Unix-domain-socket control plane.
@@ -60,7 +60,7 @@ AI Agent
    |
    | MCP stdio
    v
-agentInjectionIII MCP
+AgentInjectionIII MCP
    |
    | newline-delimited JSON
    | Unix domain socket
@@ -85,6 +85,8 @@ The MCP server sends the same `ControlRequest` messages as
 - `get_status`
 - `list_targets`
 - `doctor`
+- `get_pending_changes`
+- `inject_pending_changes`
 - `inject_sources`
 - `load_dylib`
 
@@ -97,6 +99,7 @@ The MCP server sends the same `ControlRequest` messages as
 
 ### Diagnostics
 
+- `get_diagnostics` — preferred troubleshooting snapshot combining status, targets, doctor, compiler state, trace state, logs, injection lifecycle events, and last error
 - `get_logs`
 - `clear_logs`
 - `get_injection_events`

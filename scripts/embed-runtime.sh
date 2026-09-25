@@ -22,13 +22,13 @@ esac
 SOURCE="${AGENT_INJECTION_RUNTIME:-$DEFAULT_SOURCE}"
 
 if [ ! -d "$SOURCE" ]; then
-  echo "agentInjectionIII: local runtime not installed for PLATFORM_NAME=${PLATFORM:-unknown}; skipping."
+  echo "AgentInjectionIII: local runtime not installed for PLATFORM_NAME=${PLATFORM:-unknown}; skipping."
   echo "  expected: $SOURCE"
   exit 0
 fi
 
 if [ -z "${TARGET_BUILD_DIR:-}" ] || [ -z "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" ]; then
-  echo "agentInjectionIII: Xcode build variables are unavailable; skipping."
+  echo "AgentInjectionIII: Xcode build variables are unavailable; skipping."
   exit 0
 fi
 
@@ -46,7 +46,7 @@ PLIST="$DEST/Info.plist"
 if [ "$DEVICE_MODE" = "1" ]; then
   if [ -z "${CODESIGNING_FOLDER_PATH:-}" ] ||
      [ -z "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
-    echo "agentInjectionIII: device runtime requires Xcode code-signing variables." >&2
+    echo "AgentInjectionIII: device runtime requires Xcode code-signing variables." >&2
     exit 1
   fi
 
@@ -120,4 +120,4 @@ if [ "$DEVICE_MODE" = "1" ]; then
   sign_item "$DEST"
 fi
 
-echo "agentInjectionIII: embedded $SOURCE -> $DEST"
+echo "AgentInjectionIII: embedded $SOURCE -> $DEST"

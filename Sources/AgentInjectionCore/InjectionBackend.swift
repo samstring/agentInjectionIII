@@ -14,9 +14,12 @@ public protocol InjectionBackend: AnyObject {
     var name: String { get }
     func status() -> BackendStatus
     func targets() -> TargetsResult
+    func pendingChanges() -> PendingChangesResult
+    func injectPending(target: String?) -> BackendInjectionResponse
     func inject(files: [String], target: String?) -> BackendInjectionResponse
     func loadDylib(path: String, target: String?) -> BackendInjectionResponse
     func doctor(path: String?) -> DoctorReport
+    func diagnostics(limit: Int?) -> DiagnosticsResult
     func screenshot(path: String?, target: String?) -> Result<ScreenshotResult, ControlError>
     func touchCapture(target: String?) -> Result<TouchResult, ControlError>
     func touchRead(target: String?) -> Result<TouchResult, ControlError>
@@ -100,6 +103,26 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
         TargetsResult(targets: [])
     }
 
+    public func pendingChanges() -> PendingChangesResult {
+        PendingChangesResult(
+            projectRoot: projectRoot,
+            watching: projectRoot != nil,
+            files: []
+        )
+    }
+
+    public func injectPending(
+        target: String?
+    ) -> BackendInjectionResponse {
+        BackendInjectionResponse(
+            results: [],
+            error: ControlError(
+                code: "BACKEND_NOT_READY",
+                message: "Scaffold backend cannot inject pending changes."
+            )
+        )
+    }
+
     public func inject(
         files: [String],
         target: String?
@@ -154,6 +177,29 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
                     message: "Scaffold backend has no injection engine."
                 )
             ]
+        )
+    }
+
+    public func diagnostics(
+        limit: Int?
+    ) -> DiagnosticsResult {
+        DiagnosticsResult(
+            status: status(),
+            targets: targets(),
+            trace: TraceResult(
+                connected: false,
+                active: false
+            ),
+            compilerState: compilerState(),
+            doctor: doctor(path: nil),
+            logs: logs(
+                since: nil,
+                limit: limit
+            ),
+            events: InjectionEventsResult(
+                events: []
+            ),
+            lastError: lastError()
         )
     }
 

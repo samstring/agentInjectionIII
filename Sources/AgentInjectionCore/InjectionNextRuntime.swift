@@ -909,7 +909,10 @@ public final class InjectionNextRuntimeServer {
         self.logStore = logStore
         self.selectedXcodePath = xcodePath
         self.discovery = devicesEnabled
-            ? InjectionDeviceDiscovery(port: port)
+            ? InjectionDeviceDiscovery(
+                port: port,
+                logStore: logStore
+            )
             : nil
     }
 
@@ -976,6 +979,10 @@ public final class InjectionNextRuntimeServer {
         }
 
         listenerFD = fd
+
+        logStore.append(
+            "Runtime listener started on \(devicesEnabled ? "0.0.0.0" : "127.0.0.1"):\(port)."
+        )
 
         if devicesEnabled {
             try discovery?.start()
@@ -1393,6 +1400,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     private let swiftUIPreparer = SwiftUIPreparer()
     private let projectReorderer = ProjectReorderer()
     private let eventStore = InjectionEventStore()
+    private let pendingSources: PendingSourceStore
+    private var fileWatcher: ProjectFileWatcher?
     private let backendStateLock = NSLock()
     private var lastErrorValue: ControlError?
     private var lastSourceValue: String?
@@ -1414,6 +1423,9 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         self.traceServer = traceServer
         self.projectRoot = projectRoot
         self.codeSigningIdentity = codeSigningIdentity
+        self.pendingSources = PendingSourceStore(
+            projectRoot: projectRoot
+        )
         self.compiler = BuildLogCompiler(
             projectRoot: projectRoot,
             derivedDataRoot: derivedDataRoot,
@@ -1427,6 +1439,14 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                 xcodePath
             )
         }
+
+        if let projectRoot {
+            fileWatcher = ProjectFileWatcher(
+                root: projectRoot
+            ) { [weak self] files in
+                self?.recordPendingSources(files)
+            }
+        }
     }
 
     public func status() -> BackendStatus {
@@ -1438,7 +1458,9 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             appConnected: runtime.connected,
             capabilities: [
                 "status",
+                "diagnostics",
                 "source-inject",
+                "pending-changes",
                 "load-dylib",
                 "swift",
                 "objc",
@@ -1478,6 +1500,31 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public func targets() -> TargetsResult {
         TargetsResult(
             targets: runtimeServer.targets()
+        )
+    }
+
+    public func pendingChanges() -> PendingChangesResult {
+        pendingSources.snapshot(
+            watching: fileWatcher != nil
+        )
+    }
+
+    public func injectPending(
+        target: String?
+    ) -> BackendInjectionResponse {
+        let pending = pendingSources.snapshot(
+            watching: fileWatcher != nil
+        )
+
+        guard !pending.files.isEmpty else {
+            return BackendInjectionResponse(
+                results: []
+            )
+        }
+
+        return inject(
+            files: pending.files,
+            target: target
         )
     }
 
@@ -1738,6 +1785,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             }
         }
 
+        for result in results where result.injected {
+            pendingSources.markInjected(
+                result.file
+            )
+        }
+
         return BackendInjectionResponse(
             results: results,
             error: firstError
@@ -1774,6 +1827,26 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         return BackendInjectionResponse(
             results: [result],
             error: error
+        )
+    }
+
+    public func diagnostics(
+        limit: Int?
+    ) -> DiagnosticsResult {
+        DiagnosticsResult(
+            status: status(),
+            targets: targets(),
+            trace: traceServer.status(),
+            compilerState: compilerState(),
+            doctor: doctor(path: nil),
+            logs: logs(
+                since: nil,
+                limit: limit
+            ),
+            events: eventStore.snapshot(
+                limit: limit
+            ),
+            lastError: lastError()
         )
     }
 
@@ -2489,6 +2562,19 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             return value
         } catch {
             return nil
+        }
+    }
+
+    private func recordPendingSources(
+        _ files: [String]
+    ) {
+        let added = pendingSources.add(files)
+        for source in added {
+            eventStore.append(
+                phase: "changed",
+                source: source,
+                message: "Source changed; waiting for explicit injection."
+            )
         }
     }
 

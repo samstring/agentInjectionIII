@@ -19,6 +19,38 @@ final class ControlRouterTests: XCTestCase {
         XCTAssertEqual(response.status?.socketPath, "/tmp/test-agentInjectionIII.sock")
     }
 
+    func testPendingChangesRoutesThroughBackend() throws {
+        let backend = ScaffoldInjectionBackend(
+            projectRoot: "/tmp/project"
+        )
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(
+            action: .pendingChanges
+        )
+        let response = try route(
+            request,
+            through: router
+        )
+
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(
+            response.pendingChanges?.projectRoot,
+            "/tmp/project"
+        )
+        XCTAssertEqual(
+            response.pendingChanges?.watching,
+            true
+        )
+        XCTAssertEqual(
+            response.pendingChanges?.files,
+            []
+        )
+    }
+
     func testInjectReturnsExplicitBackendNotReadyError() throws {
         let backend = ScaffoldInjectionBackend(projectRoot: "/repo")
         let router = ControlRouter(
@@ -111,6 +143,40 @@ final class ControlRouterTests: XCTestCase {
             )
             XCTAssertNil(response.trace)
         }
+    }
+
+    func testDiagnosticsReturnsNonConsumingSnapshot() throws {
+        let backend = ScaffoldInjectionBackend(
+            projectRoot: "/tmp/project"
+        )
+        let router = ControlRouter(
+            socketPath: "/tmp/test-agentInjectionIII.sock",
+            backend: backend
+        )
+
+        let request = ControlRequest(
+            action: .diagnostics,
+            limit: 50
+        )
+        let response = try route(
+            request,
+            through: router
+        )
+
+        XCTAssertTrue(response.ok)
+        XCTAssertNotNil(response.diagnostics)
+        XCTAssertEqual(
+            response.diagnostics?.status.name,
+            "scaffold"
+        )
+        XCTAssertEqual(
+            response.diagnostics?.trace.connected,
+            false
+        )
+        XCTAssertEqual(
+            response.diagnostics?.doctor.ready,
+            false
+        )
     }
 
     func testScreenshotFailsCleanlyWithoutRuntime() throws {

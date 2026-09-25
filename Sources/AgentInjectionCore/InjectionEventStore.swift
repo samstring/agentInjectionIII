@@ -3,6 +3,7 @@ import Foundation
 public final class InjectionEventStore {
     private let lock = NSLock()
     private var events: [InjectionEvent] = []
+    private var history: [InjectionEvent] = []
     private var nextSequence: Int64 = 1
     private let maximumEvents: Int
 
@@ -19,18 +20,18 @@ public final class InjectionEventStore {
         linkMilliseconds: Double? = nil
     ) {
         lock.lock()
-        events.append(
-            InjectionEvent(
-                sequence: nextSequence,
-                timestamp: Date.timeIntervalSinceReferenceDate,
-                phase: phase,
-                source: source,
-                target: target,
-                message: message,
-                compileMilliseconds: compileMilliseconds,
-                linkMilliseconds: linkMilliseconds
-            )
+        let event = InjectionEvent(
+            sequence: nextSequence,
+            timestamp: Date.timeIntervalSinceReferenceDate,
+            phase: phase,
+            source: source,
+            target: target,
+            message: message,
+            compileMilliseconds: compileMilliseconds,
+            linkMilliseconds: linkMilliseconds
         )
+        events.append(event)
+        history.append(event)
         nextSequence += 1
 
         if events.count > maximumEvents {
@@ -38,7 +39,31 @@ public final class InjectionEventStore {
                 events.count - maximumEvents
             )
         }
+        if history.count > maximumEvents {
+            history.removeFirst(
+                history.count - maximumEvents
+            )
+        }
         lock.unlock()
+    }
+
+    public func snapshot(
+        limit: Int? = nil
+    ) -> InjectionEventsResult {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var selected = history
+        if let limit {
+            let bounded = max(0, min(limit, 1_000))
+            if selected.count > bounded {
+                selected = Array(selected.suffix(bounded))
+            }
+        }
+
+        return InjectionEventsResult(
+            events: selected
+        )
     }
 
     public func drain(
@@ -65,6 +90,7 @@ public final class InjectionEventStore {
     public func clear() -> InjectionEventsResult {
         lock.lock()
         events.removeAll(keepingCapacity: true)
+        history.removeAll(keepingCapacity: true)
         lock.unlock()
         return InjectionEventsResult(events: [])
     }

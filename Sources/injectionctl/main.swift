@@ -54,9 +54,12 @@ private func printUsage() {
     usage:
       injectionctl [--socket PATH] targets
       injectionctl [--socket PATH] [--target ID] status
+      injectionctl [--socket PATH] pending
+      injectionctl [--socket PATH] [--target ID] inject-pending
       injectionctl [--socket PATH] [--target ID] inject FILE [FILE ...]
       injectionctl [--socket PATH] [--target ID] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
+      injectionctl [--socket PATH] diagnostics [LIMIT]
       injectionctl [--socket PATH] [--target ID] screenshot [OUTPUT.png]
       injectionctl [--socket PATH] [--target ID] touch capture
       injectionctl [--socket PATH] [--target ID] touch read
@@ -160,6 +163,23 @@ case "status":
         target: options.target
     )
 
+case "pending":
+    guard options.arguments.count == 1 else {
+        fatalUsage("pending does not accept positional arguments.")
+    }
+    request = ControlRequest(
+        action: .pendingChanges
+    )
+
+case "inject-pending":
+    guard options.arguments.count == 1 else {
+        fatalUsage("inject-pending does not accept positional arguments.")
+    }
+    request = ControlRequest(
+        action: .injectPending,
+        target: options.target
+    )
+
 case "inject":
     let files = Array(options.arguments.dropFirst()).map(absolutePath)
     guard !files.isEmpty else {
@@ -190,6 +210,25 @@ case "doctor":
         path: options.arguments.count == 2
             ? absolutePath(options.arguments[1])
             : nil
+    )
+
+case "diagnostics":
+    guard options.arguments.count <= 2 else {
+        fatalUsage("diagnostics accepts at most one LIMIT.")
+    }
+
+    var limit: Int?
+    if options.arguments.count == 2 {
+        guard let parsed = Int(options.arguments[1]),
+              parsed > 0 else {
+            fatalUsage("diagnostics limit must be a positive integer.")
+        }
+        limit = parsed
+    }
+
+    request = ControlRequest(
+        action: .diagnostics,
+        limit: limit
     )
 
 case "screenshot":

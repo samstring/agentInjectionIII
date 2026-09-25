@@ -132,7 +132,7 @@ if [ "$SIMULATOR_ONLY" != "1" ]; then
 fi
 
 echo
-echo "Installed agentInjectionIII runtimes:"
+echo "Installed AgentInjectionIII runtimes:"
 echo "  simulator: $SIM_BUNDLE"
 if [ "$SIMULATOR_ONLY" != "1" ]; then
   echo "  device:    $DEVICE_BUNDLE"

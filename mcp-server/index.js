@@ -104,6 +104,49 @@ server.tool(
 );
 
 server.tool(
+  "get_diagnostics",
+  "Get a comprehensive non-consuming injection diagnostic snapshot for troubleshooting daemon, runtime, compiler, injection, and trace failures",
+  {
+    limit: z.number()
+      .int()
+      .positive()
+      .max(1000)
+      .optional()
+      .describe(
+        "Maximum recent log and lifecycle entries to include"
+      )
+  },
+  async ({ limit }) =>
+    call(
+      "diagnostics",
+      { limit },
+      30000
+    )
+);
+
+server.tool(
+  "get_pending_changes",
+  "List source files recorded by the project watcher and waiting for explicit injection",
+  {},
+  async () =>
+    call(
+      "pending_changes"
+    )
+);
+
+server.tool(
+  "inject_pending_changes",
+  "Inject all source files currently recorded by the project watcher; successful files are removed while failed files remain pending",
+  { target },
+  async ({ target }) =>
+    call(
+      "inject_pending",
+      { target },
+      60000
+    )
+);
+
+server.tool(
   "inject_sources",
   "Compile and hot-inject changed Swift/Objective-C sources into the running app",
   {

@@ -4,6 +4,109 @@ import Darwin
 @testable import AgentInjectionCore
 
 final class AgentTraceServerTests: XCTestCase {
+    func testDeviceEnabledTraceServerAcceptsLANConnection() throws {
+        guard let host = Self.nonLoopbackIPv4Address() else {
+            throw XCTSkip("No active non-loopback IPv4 interface is available.")
+        }
+
+        let port = UInt16(
+            19_000 + Int(getpid()) % 1_000
+        )
+        let server = AgentTraceServer(
+            port: port,
+            devicesEnabled: true
+        )
+        try server.start()
+
+        let fd = try Self.connect(
+            port: port,
+            host: host
+        )
+        try Self.sendHello(fd: fd)
+
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline &&
+              !server.status().connected {
+            usleep(10_000)
+        }
+
+        XCTAssertTrue(server.status().connected)
+        Darwin.close(fd)
+    }
+
+    func testConnectionWithoutValidHelloIsRejected() throws {
+        let port = UInt16(
+            20_000 + Int(getpid()) % 1_000
+        )
+        let server = AgentTraceServer(port: port)
+        try server.start()
+
+        let fd = try Self.connect(port: port)
+        defer { Darwin.close(fd) }
+
+        var data = Data(
+            #"{"type":"hello","protocol":999}"#.utf8
+        )
+        data.append(0x0A)
+        try Self.writeAll(data, fd: fd)
+
+        usleep(100_000)
+        XCTAssertFalse(server.status().connected)
+    }
+
+    func testSecondConnectionCannotReplaceActiveBridge() throws {
+        let port = UInt16(
+            21_000 + Int(getpid()) % 1_000
+        )
+        let server = AgentTraceServer(port: port)
+        try server.start()
+
+        let first = try Self.connect(port: port)
+        defer { Darwin.close(first) }
+        try Self.sendHello(fd: first)
+
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline &&
+              !server.status().connected {
+            usleep(10_000)
+        }
+        XCTAssertTrue(server.status().connected)
+
+        let second = try Self.connect(port: port)
+        defer { Darwin.close(second) }
+        try Self.sendHello(fd: second)
+
+        usleep(100_000)
+        XCTAssertTrue(server.status().connected)
+
+        let payload: [String: Any] = [
+            "type": "test_result",
+            "timestamp":
+                Date.timeIntervalSinceReferenceDate,
+            "testName":
+                "InjectedTests.testActiveBridge",
+            "passed": true,
+            "failures": 0,
+            "messages": []
+        ]
+        var data = try JSONSerialization.data(
+            withJSONObject: payload
+        )
+        data.append(0x0A)
+        try Self.writeAll(data, fd: first)
+
+        let resultDeadline = Date().addingTimeInterval(2)
+        while Date() < resultDeadline &&
+              server.injectedTestResults().results.isEmpty {
+            usleep(10_000)
+        }
+
+        XCTAssertEqual(
+            server.injectedTestResults().results.first?.name,
+            "InjectedTests.testActiveBridge"
+        )
+    }
+
     func testInjectedXCTestResultIsBuffered() throws {
         let port = UInt16(
             19_000 + Int(getpid()) % 1_000
@@ -17,6 +120,7 @@ final class AgentTraceServerTests: XCTestCase {
             port: port
         )
         defer { Darwin.close(fd) }
+        try Self.sendHello(fd: fd)
 
         let payload: [String: Any] = [
             "type": "test_result",
@@ -86,8 +190,34 @@ final class AgentTraceServerTests: XCTestCase {
         XCTAssertTrue(cleared.results.isEmpty)
     }
 
+    private static func nonLoopbackIPv4Address() -> String? {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0,
+              let first = interfaces else {
+            return nil
+        }
+        defer { freeifaddrs(first) }
+
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let interface = current {
+            let flags = interface.pointee.ifa_flags
+            if let address = interface.pointee.ifa_addr,
+               address.pointee.sa_family == sa_family_t(AF_INET),
+               flags & UInt32(IFF_UP) != 0,
+               flags & UInt32(IFF_LOOPBACK) == 0 {
+                let ipv4 = UnsafeRawPointer(address)
+                    .assumingMemoryBound(to: sockaddr_in.self)
+                    .pointee.sin_addr
+                return String(cString: inet_ntoa(ipv4))
+            }
+            current = interface.pointee.ifa_next
+        }
+        return nil
+    }
+
     private static func connect(
-        port: UInt16
+        port: UInt16,
+        host: String = "127.0.0.1"
     ) throws -> Int32 {
         var lastError = "unknown"
 
@@ -114,7 +244,7 @@ final class AgentTraceServerTests: XCTestCase {
                 port.bigEndian
             address.sin_addr = in_addr(
                 s_addr:
-                    inet_addr("127.0.0.1")
+                    inet_addr(host)
             )
 
             let result =
@@ -158,6 +288,16 @@ final class AgentTraceServerTests: XCTestCase {
                     "connect failed: \(lastError)"
             ]
         )
+    }
+
+    private static func sendHello(
+        fd: Int32
+    ) throws {
+        var data = Data(
+            #"{"type":"hello","protocol":1}"#.utf8
+        )
+        data.append(0x0A)
+        try writeAll(data, fd: fd)
     }
 
     private static func writeAll(

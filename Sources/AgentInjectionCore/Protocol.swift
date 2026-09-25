@@ -3,8 +3,11 @@ import Foundation
 public enum ControlAction: String, Codable, Sendable {
     case status
     case inject
+    case pendingChanges = "pending_changes"
+    case injectPending = "inject_pending"
     case loadDylib = "load_dylib"
     case doctor
+    case diagnostics
     case screenshot
     case traceStart = "trace_start"
     case traceStop = "trace_stop"
@@ -286,6 +289,22 @@ public struct TargetsResult: Codable, Sendable {
     }
 }
 
+public struct PendingChangesResult: Codable, Sendable {
+    public let projectRoot: String?
+    public let watching: Bool
+    public let files: [String]
+
+    public init(
+        projectRoot: String?,
+        watching: Bool,
+        files: [String]
+    ) {
+        self.projectRoot = projectRoot
+        self.watching = watching
+        self.files = files
+    }
+}
+
 public struct TouchResult: Codable, Sendable {
     public let target: String?
     public let events: [String]
@@ -408,6 +427,40 @@ public struct InjectionEventsResult: Codable, Sendable {
 
     public init(events: [InjectionEvent]) {
         self.events = events
+    }
+}
+
+public struct DiagnosticsResult: Codable, Sendable {
+    public let generatedAt: Double
+    public let status: BackendStatus
+    public let targets: TargetsResult
+    public let trace: TraceResult
+    public let compilerState: CompilerStateResult
+    public let doctor: DoctorReport
+    public let logs: LogsResult
+    public let events: InjectionEventsResult
+    public let lastError: LastErrorResult
+
+    public init(
+        generatedAt: Double = Date.timeIntervalSinceReferenceDate,
+        status: BackendStatus,
+        targets: TargetsResult,
+        trace: TraceResult,
+        compilerState: CompilerStateResult,
+        doctor: DoctorReport,
+        logs: LogsResult,
+        events: InjectionEventsResult,
+        lastError: LastErrorResult
+    ) {
+        self.generatedAt = generatedAt
+        self.status = status
+        self.targets = targets
+        self.trace = trace
+        self.compilerState = compilerState
+        self.doctor = doctor
+        self.logs = logs
+        self.events = events
+        self.lastError = lastError
     }
 }
 
@@ -637,7 +690,9 @@ public struct ControlResponse: Codable, Sendable {
     public let ok: Bool
     public let status: DaemonStatus?
     public let injections: [InjectionResult]?
+    public let pendingChanges: PendingChangesResult?
     public let doctor: DoctorReport?
+    public let diagnostics: DiagnosticsResult?
     public let screenshot: ScreenshotResult?
     public let trace: TraceResult?
     public let targets: TargetsResult?
@@ -661,7 +716,9 @@ public struct ControlResponse: Codable, Sendable {
         ok: Bool,
         status: DaemonStatus? = nil,
         injections: [InjectionResult]? = nil,
+        pendingChanges: PendingChangesResult? = nil,
         doctor: DoctorReport? = nil,
+        diagnostics: DiagnosticsResult? = nil,
         screenshot: ScreenshotResult? = nil,
         trace: TraceResult? = nil,
         targets: TargetsResult? = nil,
@@ -684,7 +741,9 @@ public struct ControlResponse: Codable, Sendable {
         self.ok = ok
         self.status = status
         self.injections = injections
+        self.pendingChanges = pendingChanges
         self.doctor = doctor
+        self.diagnostics = diagnostics
         self.screenshot = screenshot
         self.trace = trace
         self.targets = targets
@@ -721,6 +780,17 @@ public struct ControlResponse: Codable, Sendable {
         )
     }
 
+    public static func pendingChanges(
+        id: String,
+        result: PendingChangesResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            pendingChanges: result
+        )
+    }
+
     public static func doctor(
         id: String,
         report: DoctorReport
@@ -735,6 +805,17 @@ public struct ControlResponse: Codable, Sendable {
                     code: "DOCTOR_NOT_READY",
                     message: "One or more required injection checks failed."
                 )
+        )
+    }
+
+    public static func diagnostics(
+        id: String,
+        result: DiagnosticsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            diagnostics: result
         )
     }
 

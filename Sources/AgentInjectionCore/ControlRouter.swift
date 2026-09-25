@@ -52,6 +52,22 @@ public final class ControlRouter {
             )
             return .status(id: request.id, status)
 
+        case .pendingChanges:
+            return .pendingChanges(
+                id: request.id,
+                result: backend.pendingChanges()
+            )
+
+        case .injectPending:
+            let result = backend.injectPending(
+                target: request.target
+            )
+            return .injection(
+                id: request.id,
+                results: result.results,
+                error: result.error
+            )
+
         case .inject:
             guard let files = request.files, !files.isEmpty else {
                 return .failure(
@@ -94,6 +110,14 @@ public final class ControlRouter {
             return .doctor(
                 id: request.id,
                 report: backend.doctor(path: request.path)
+            )
+
+        case .diagnostics:
+            return .diagnostics(
+                id: request.id,
+                result: backend.diagnostics(
+                    limit: request.limit
+                )
             )
 
         case .screenshot:

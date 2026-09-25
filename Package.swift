@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "agentInjectionIII",
+    name: "AgentInjectionIII",
     platforms: [
         .macOS(.v13)
     ],
@@ -23,6 +23,10 @@ let package = Package(
         .executable(
             name: "injectionctl",
             targets: ["injectionctl"]
+        ),
+        .executable(
+            name: "AgentInjectionIII",
+            targets: ["AgentInjectionMenu"]
         )
     ],
     dependencies: [
@@ -77,6 +81,10 @@ let package = Package(
                 "AgentInjectionCore",
                 "AgentInjectionHostShim"
             ]
+        ),
+        .executableTarget(
+            name: "AgentInjectionMenu",
+            dependencies: ["AgentInjectionCore"]
         ),
         .testTarget(
             name: "AgentInjectionCoreTests",
