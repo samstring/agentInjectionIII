@@ -219,7 +219,7 @@ echo "==> Build separate Swift feature project"
 set +e
 xcodebuild \
   -project "$SMOKE_DIR/FeatureProject/SmokeFeature.xcodeproj" \
-  -target SmokeFeature \
+  -scheme SmokeFeature \
   -configuration Debug \
   -sdk iphonesimulator \
   -destination "platform=iOS Simulator,id=$UDID" \

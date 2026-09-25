@@ -56,6 +56,7 @@ feature_target.build_configurations.each do |config|
   settings['PRODUCT_NAME'] = 'SmokeFeature'
   settings['SWIFT_VERSION'] = '5.0'
   settings['DEFINES_MODULE'] = 'YES'
+  settings['GENERATE_INFOPLIST_FILE'] = 'YES'
   settings['SKIP_INSTALL'] = 'YES'
   settings['CODE_SIGNING_ALLOWED'] = 'NO'
   settings['SWIFT_OPTIMIZATION_LEVEL'] =
