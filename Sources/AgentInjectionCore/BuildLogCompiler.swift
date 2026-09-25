@@ -763,41 +763,52 @@ public final class BuildLogCompiler {
 
         guard compileResult.status == 0,
               fileManager.fileExists(atPath: object) else {
+            let diagnostics = parseCompilerDiagnostics(
+                compileResult.combinedOutput
+            )
+            let compileFailure = ControlError(
+                code: "COMPILE_FAILED",
+                message: """
+                Failed to recompile \(source).
+
+                Command:
+                \(compileCommand)
+
+                Output:
+                \(compileResult.combinedOutput)
+                """,
+                diagnostics: diagnostics.isEmpty
+                    ? nil
+                    : diagnostics
+            )
+
             invalidateCommands(
                 source: source,
                 platform: platform
             )
 
             if usedPersistentOrMemoryCache && allowCachedRetry {
-                return compileAndLink(
+                switch compileAndLink(
                     source: source,
                     platform: platform,
                     arch: arch,
                     allowCachedRetry: false
-                )
+                ) {
+                case .success(let artifact):
+                    return .success(artifact)
+                case .failure(let retryError):
+                    // If cache fallback cannot rediscover a command, preserve
+                    // the original compiler failure. It contains the command
+                    // and stderr needed to diagnose why the captured context
+                    // was rejected in the first place.
+                    if retryError.code == "COMPILE_COMMAND_NOT_FOUND" {
+                        return .failure(compileFailure)
+                    }
+                    return .failure(retryError)
+                }
             }
 
-            let diagnostics = parseCompilerDiagnostics(
-                compileResult.combinedOutput
-            )
-
-            return .failure(
-                ControlError(
-                    code: "COMPILE_FAILED",
-                    message: """
-                    Failed to recompile \(source).
-
-                    Command:
-                    \(compileCommand)
-
-                    Output:
-                    \(compileResult.combinedOutput)
-                    """,
-                    diagnostics: diagnostics.isEmpty
-                        ? nil
-                        : diagnostics
-                )
-            )
+            return .failure(compileFailure)
         }
 
         let linkArguments = makeLinkArguments(
