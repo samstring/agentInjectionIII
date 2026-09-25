@@ -912,6 +912,11 @@ public final class BuildLogCompiler {
     }
 
     public func remove(_ artifact: Artifact) {
+        if ProcessInfo.processInfo.environment[
+            "AGENT_INJECTION_KEEP_ARTIFACTS"
+        ] != nil {
+            return
+        }
         try? fileManager.removeItem(atPath: artifact.object)
         try? fileManager.removeItem(atPath: artifact.dylib)
     }
