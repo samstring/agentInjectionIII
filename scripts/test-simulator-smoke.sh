@@ -298,72 +298,60 @@ if [ "$XCODE_STATUS" != "0" ]; then
   exit "$XCODE_STATUS"
 fi
 
-echo "==> Seed captured Swift frontend commands from xcodebuild output"
+echo "==> Seed captured Swift frontend commands from all project builds"
 FRONTEND_LOG="$HOME/.agentInjectionIII/cache/frontend-commands.log"
 mkdir -p "$(dirname "$FRONTEND_LOG")"
-python3 - \
-  "$BUILD_LOG" \
-  "$FEATURE_BUILD_LOG" \
-  "$FRONTEND_LOG" \
-  "$SMOKE_DIR" \
-  "$SMOKE_DIR/FeatureProject" <<'PY'
+: > "$FRONTEND_LOG"
+
+capture_frontend_commands() {
+  build_log="$1"
+  working_directory="$2"
+
+  python3 - "$build_log" "$working_directory" "$FRONTEND_LOG" <<'PY'
 from pathlib import Path
 import sys
 
-app_log = Path(sys.argv[1])
-feature_log = Path(sys.argv[2])
+build_log = Path(sys.argv[1])
+working_directory = sys.argv[2]
 frontend_log = Path(sys.argv[3])
-app_working_directory = sys.argv[4]
-feature_working_directory = sys.argv[5]
-
-specs = [
-    (
-        app_log,
-        app_working_directory,
-        "SmokeViewController.swift",
-    ),
-    (
-        feature_log,
-        feature_working_directory,
-        "SmokeFeature.swift",
-    ),
-]
 
 commands = []
-for build_log, working_directory, source_name in specs:
-    matched = 0
-    for raw in build_log.read_text(errors="replace").splitlines():
-        line = raw.strip()
-        if "swift-frontend" not in line:
-            continue
-        if " -frontend " not in line or " -c " not in line:
-            continue
-        if source_name not in line:
-            continue
-        start = line.find("/")
-        if start < 0:
-            continue
-        command = line[start:]
-        commands.append(
-            f"{working_directory}\t{command}"
-        )
-        matched += 1
+for raw in build_log.read_text(errors="replace").splitlines():
+    line = raw.strip()
+    if "swift-frontend" not in line:
+        continue
+    if " -frontend " not in line or " -c " not in line:
+        continue
+    start = line.find("/")
+    if start < 0:
+        continue
+    commands.append(
+        f"{working_directory}\t{line[start:]}"
+    )
 
-    if not matched:
-        raise SystemExit(
-            "No Swift frontend compile command for "
-            f"{source_name} was found in xcodebuild output."
-        )
+if not commands:
+    raise SystemExit(
+        f"No Swift frontend commands found in {build_log}"
+    )
 
-frontend_log.write_text(
-    "\n".join(commands) + "\n"
-)
+with frontend_log.open("a") as stream:
+    stream.write("\n".join(commands) + "\n")
+
 print(
     f"Captured {len(commands)} Swift frontend command(s) "
-    f"-> {frontend_log}"
+    f"from {build_log.name}"
 )
 PY
+}
 
+capture_frontend_commands "$BUILD_LOG" "$SMOKE_DIR"
+for index in $(seq 0 $((FEATURE_PROJECT_COUNT - 1))); do
+  capture_frontend_commands \
+    "${FEATURE_BUILD_LOGS[$index]}" \
+    "${FEATURE_DIRS[$index]}"
+done
+
+echo "Captured $(wc -l < "$FRONTEND_LOG" | tr -d ' ') total frontend command(s)"
 cp "$FRONTEND_LOG" "$ARTIFACTS/frontend-commands.log"
 
 APP="$DERIVED/Build/Products/Debug-iphonesimulator/SimulatorSmokeApp.app"
@@ -377,17 +365,21 @@ if [ ! -d "$APP/iOSInjection.bundle" ]; then
   exit 1
 fi
 
-FEATURE_FRAMEWORK="$DERIVED/Build/Products/Debug-iphonesimulator/SmokeFeature.framework"
-if [ ! -d "$FEATURE_FRAMEWORK" ]; then
-  echo "Built feature framework not found: $FEATURE_FRAMEWORK" >&2
-  exit 1
-fi
-
 mkdir -p "$APP/Frameworks"
-rm -rf "$APP/Frameworks/SmokeFeature.framework"
-/usr/bin/ditto \
-  "$FEATURE_FRAMEWORK" \
-  "$APP/Frameworks/SmokeFeature.framework"
+for index in $(seq 0 $((FEATURE_PROJECT_COUNT - 1))); do
+  feature_framework="${FEATURE_FRAMEWORKS[$index]}"
+  module="${FEATURE_MODULES[$index]}"
+
+  if [ ! -d "$feature_framework" ]; then
+    echo "Built feature framework not found: $feature_framework" >&2
+    exit 1
+  fi
+
+  rm -rf "$APP/Frameworks/$module.framework"
+  /usr/bin/ditto \
+    "$feature_framework" \
+    "$APP/Frameworks/$module.framework"
+done
 
 echo "==> Start injectiond"
 cd "$REPO_ROOT"
