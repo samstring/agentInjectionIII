@@ -848,7 +848,7 @@ raise SystemExit(0 if ok else 1)
 PY
 
 echo "==> Start SwiftTrace lifetime instance counting"
-"$CTL" --socket "$SOCKET" instances start |
+"$CTL" --socket "$SOCKET" instances start SmokeLifetimeProbe |
   tee "$INSTANCES_START_JSON"
 
 python3 - "$INSTANCES_START_JSON" <<'PY'
