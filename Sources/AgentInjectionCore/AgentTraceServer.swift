@@ -521,8 +521,9 @@ public final class AgentTraceServer {
         )
     }
 
-    public func instancesStart()
-        -> Result<InstanceCountsResult, ControlError> {
+    public func instancesStart(
+        filter: String?
+    ) -> Result<InstanceCountsResult, ControlError> {
         let bridge: TraceBridgeClient
         let pending = PendingTraceCommand(
             expectedState: "instances_started"
@@ -554,7 +555,7 @@ public final class AgentTraceServer {
         do {
             try bridge.send(
                 action: "instances_start",
-                filter: nil
+                filter: filter
             )
         } catch {
             clearPending(pending)
