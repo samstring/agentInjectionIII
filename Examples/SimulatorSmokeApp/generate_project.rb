@@ -4,75 +4,172 @@ require 'fileutils'
 
 root = File.expand_path(__dir__)
 
-feature_root = File.join(root, 'FeatureProject')
-feature_project_path = File.join(
-  feature_root,
-  'SmokeFeature.xcodeproj'
-)
-feature_generated = File.join(
-  feature_root,
-  'Generated'
-)
-FileUtils.mkdir_p(feature_root)
-FileUtils.rm_rf(feature_project_path)
-FileUtils.rm_rf(feature_generated)
-FileUtils.mkdir_p(feature_generated)
+feature_project_count =
+  Integer(ENV.fetch('SMOKE_FEATURE_PROJECT_COUNT', '4'))
+swift_fillers_per_feature =
+  Integer(ENV.fetch('SMOKE_SWIFT_FILLERS_PER_FEATURE', '96'))
+objc_fillers_per_feature =
+  Integer(ENV.fetch('SMOKE_OBJC_FILLERS_PER_FEATURE', '24'))
 
-feature_project = Xcodeproj::Project.new(
-  feature_project_path
-)
-feature_target = feature_project.new_target(
-  :framework,
-  'SmokeFeature',
-  :ios,
-  '16.0'
-)
+unless (1..12).cover?(feature_project_count)
+  raise "SMOKE_FEATURE_PROJECT_COUNT must be between 1 and 12"
+end
+unless (0..512).cover?(swift_fillers_per_feature)
+  raise "SMOKE_SWIFT_FILLERS_PER_FEATURE must be between 0 and 512"
+end
+unless (0..256).cover?(objc_fillers_per_feature)
+  raise "SMOKE_OBJC_FILLERS_PER_FEATURE must be between 0 and 256"
+end
 
-feature_sources = feature_project.main_group
-  .new_group('Sources', 'Sources')
-feature_source = feature_sources.new_file(
-  'SmokeFeature.swift'
-)
-feature_target.source_build_phase
-  .add_file_reference(feature_source)
+feature_projects_root = File.join(root, 'FeatureProjects')
+generated_root = File.join(root, 'Generated')
+FileUtils.rm_rf(feature_projects_root)
+FileUtils.rm_rf(generated_root)
+FileUtils.mkdir_p(feature_projects_root)
+FileUtils.mkdir_p(generated_root)
 
-generated_group = feature_project.main_group
-  .new_group('Generated', 'Generated')
-64.times do |index|
-  name = format('Filler%03d.swift', index)
-  File.write(
-    File.join(feature_generated, name),
-    "internal struct SmokeFeatureFiller#{index} { let value = #{index} }\n"
+feature_specs = (1..feature_project_count).map do |index|
+  suffix = format('%02d', index)
+  module_name = "SmokeFeature#{suffix}"
+  feature_root = File.join(
+    feature_projects_root,
+    "Feature#{suffix}"
   )
-  ref = generated_group.new_file(name)
-  feature_target.source_build_phase
-    .add_file_reference(ref)
+  source_dir = File.join(feature_root, 'Sources')
+  swift_generated = File.join(
+    feature_root,
+    'GeneratedSwift'
+  )
+  objc_generated = File.join(
+    feature_root,
+    'GeneratedObjC'
+  )
+  project_path = File.join(
+    feature_root,
+    "#{module_name}.xcodeproj"
+  )
+
+  FileUtils.mkdir_p(source_dir)
+  FileUtils.mkdir_p(swift_generated)
+  FileUtils.mkdir_p(objc_generated)
+
+  primary_name = "#{module_name}.swift"
+  primary_path = File.join(source_dir, primary_name)
+  File.write(
+    primary_path,
+    <<~SWIFT
+      import Foundation
+
+      public func smokeFeatureMessage#{suffix}() -> String {
+          "FEATURE_#{suffix}_BEFORE"
+      }
+    SWIFT
+  )
+
+  project = Xcodeproj::Project.new(project_path)
+  target = project.new_target(
+    :framework,
+    module_name,
+    :ios,
+    '16.0'
+  )
+
+  sources_group = project.main_group
+    .new_group('Sources', 'Sources')
+  primary_ref = sources_group.new_file(primary_name)
+  target.source_build_phase.add_file_reference(primary_ref)
+
+  swift_group = project.main_group
+    .new_group('GeneratedSwift', 'GeneratedSwift')
+  swift_fillers_per_feature.times do |filler_index|
+    name = format('SwiftFiller%03d.swift', filler_index)
+    File.write(
+      File.join(swift_generated, name),
+      "internal struct #{module_name}SwiftFiller#{filler_index} " \
+      "{ let value = #{filler_index} }\n"
+    )
+    ref = swift_group.new_file(name)
+    target.source_build_phase.add_file_reference(ref)
+  end
+
+  objc_group = project.main_group
+    .new_group('GeneratedObjC', 'GeneratedObjC')
+  objc_fillers_per_feature.times do |filler_index|
+    name = format('ObjCFiller%03d.m', filler_index)
+    symbol =
+      "smoke_feature_#{suffix}_objc_filler_" \
+      "#{format('%03d', filler_index)}"
+    File.write(
+      File.join(objc_generated, name),
+      "int #{symbol}(void) { return #{filler_index}; }\n"
+    )
+    ref = objc_group.new_file(name)
+    target.source_build_phase.add_file_reference(ref)
+  end
+
+  target.build_configurations.each do |config|
+    settings = config.build_settings
+    settings['PRODUCT_BUNDLE_IDENTIFIER'] =
+      "dev.agentinjection.smoke.feature#{suffix}"
+    settings['PRODUCT_NAME'] = module_name
+    settings['SWIFT_VERSION'] = '5.0'
+    settings['DEFINES_MODULE'] = 'YES'
+    settings['GENERATE_INFOPLIST_FILE'] = 'YES'
+    settings['SKIP_INSTALL'] = 'YES'
+    settings['CODE_SIGNING_ALLOWED'] = 'NO'
+    settings['SWIFT_OPTIMIZATION_LEVEL'] =
+      config.name == 'Debug' ? '-Onone' : '-O'
+    settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf'
+    settings['EMIT_FRONTEND_COMMAND_LINES'] = 'YES'
+    settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'NO'
+    settings['OTHER_LDFLAGS'] = [
+      '$(inherited)',
+      '-Xlinker',
+      '-interposable'
+    ]
+  end
+
+  project.save
+  puts(
+    "Generated #{project_path} " \
+    "(swift=#{swift_fillers_per_feature + 1}, " \
+    "objc=#{objc_fillers_per_feature})"
+  )
+
+  {
+    suffix: suffix,
+    module: module_name,
+    root: feature_root,
+    project_path: project_path,
+    primary_path: primary_path
+  }
 end
 
-feature_target.build_configurations.each do |config|
-  settings = config.build_settings
-  settings['PRODUCT_BUNDLE_IDENTIFIER'] =
-    'dev.agentinjection.smoke.feature'
-  settings['PRODUCT_NAME'] = 'SmokeFeature'
-  settings['SWIFT_VERSION'] = '5.0'
-  settings['DEFINES_MODULE'] = 'YES'
-  settings['GENERATE_INFOPLIST_FILE'] = 'YES'
-  settings['SKIP_INSTALL'] = 'YES'
-  settings['CODE_SIGNING_ALLOWED'] = 'NO'
-  settings['SWIFT_OPTIMIZATION_LEVEL'] =
-    config.name == 'Debug' ? '-Onone' : '-O'
-  settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf'
-  settings['EMIT_FRONTEND_COMMAND_LINES'] = 'YES'
-  settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'NO'
-  settings['OTHER_LDFLAGS'] = [
-    '$(inherited)',
-    '-Xlinker',
-    '-interposable'
-  ]
+matrix_path = File.join(
+  generated_root,
+  'SmokeFeatureMatrix.swift'
+)
+matrix_lines = [
+  'import Foundation'
+]
+feature_specs.each do |spec|
+  matrix_lines << "import #{spec[:module]}"
 end
-
-feature_project.save
-puts "Generated #{feature_project_path}"
+matrix_lines << ''
+matrix_lines << 'func smokeFeatureMessages() -> [(id: String, message: String)] {'
+matrix_lines << '    ['
+feature_specs.each do |spec|
+  matrix_lines <<(
+    "        (\"#{spec[:suffix]}\", " \
+    "smokeFeatureMessage#{spec[:suffix]}()),"
+  )
+end
+matrix_lines << '    ]'
+matrix_lines << '}'
+File.write(
+  matrix_path,
+  matrix_lines.join("\n") + "\n"
+)
 
 project_path = File.join(root, 'SimulatorSmokeApp.xcodeproj')
 FileUtils.rm_rf(project_path)
@@ -98,12 +195,27 @@ sources = project.main_group.new_group('Sources', 'Sources')
   SmokeViewController.swift
 ].each do |name|
   ref = sources.new_file(name)
-  if %w[main.m AppDelegate.m SmokeApplication.m SmokeObjCHelper.m SmokeViewController.swift].include?(name)
+  if %w[
+    main.m
+    AppDelegate.m
+    SmokeApplication.m
+    SmokeObjCHelper.m
+    SmokeViewController.swift
+  ].include?(name)
     target.source_build_phase.add_file_reference(ref)
   end
 end
 
-integration = project.main_group.new_group('AgentInjectionIntegration')
+generated = project.main_group.new_group(
+  'Generated',
+  'Generated'
+)
+matrix_ref = generated.new_file('SmokeFeatureMatrix.swift')
+target.source_build_phase.add_file_reference(matrix_ref)
+
+integration = project.main_group.new_group(
+  'AgentInjectionIntegration'
+)
 %w[
   AgentInjectionBootstrap.m
   AgentTraceBridge.m
@@ -118,11 +230,12 @@ end
   integration.new_file("../../Integration/#{name}")
 end
 
-info = project.main_group.new_file('Info.plist')
+project.main_group.new_file('Info.plist')
 
 target.build_configurations.each do |config|
   settings = config.build_settings
-  settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'dev.agentinjection.smoke'
+  settings['PRODUCT_BUNDLE_IDENTIFIER'] =
+    'dev.agentinjection.smoke'
   settings['PRODUCT_NAME'] = 'SimulatorSmokeApp'
   settings['INFOPLIST_FILE'] = 'Info.plist'
   settings['SWIFT_VERSION'] = '5.0'
@@ -150,12 +263,15 @@ target.build_configurations.each do |config|
     '$(inherited)',
     '@executable_path/Frameworks'
   ]
+
+  framework_flags = feature_specs.flat_map do |spec|
+    ['-framework', spec[:module]]
+  end
   settings['OTHER_LDFLAGS'] = [
     '$(inherited)',
     '-Xlinker',
     '-interposable',
-    '-framework',
-    'SmokeFeature'
+    *framework_flags
   ]
 end
 
@@ -168,4 +284,12 @@ phase.shell_script = <<~'SH'
 SH
 
 project.save
-puts "Generated #{project_path}"
+puts(
+  "Generated #{project_path} with " \
+  "#{feature_project_count} feature project(s)"
+)
+puts(
+  "Stress matrix: " \
+  "feature Swift=#{feature_project_count * (swift_fillers_per_feature + 1)}, " \
+  "feature ObjC=#{feature_project_count * objc_fillers_per_feature}"
+)
