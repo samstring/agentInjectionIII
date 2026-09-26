@@ -232,6 +232,16 @@ ensure_cocoapods
 cd "$SMOKE_DIR"
 ruby generate_project.rb
 
+TOTAL_SWIFT=$((FEATURE_PROJECT_COUNT * (SWIFT_FILLERS_PER_FEATURE + 1) + MAIN_SWIFT_FILLERS + 2))
+TOTAL_OBJC_IMPL=$((FEATURE_PROJECT_COUNT * OBJC_FILLERS_PER_FEATURE + MAIN_OBJC_FILLERS + 6))
+TOTAL_OBJC_FILES=$((TOTAL_OBJC_IMPL * 2))
+
+echo "==> Stress profile"
+echo "    feature xcodeproj: $FEATURE_PROJECT_COUNT"
+echo "    Swift compile units: $TOTAL_SWIFT"
+echo "    ObjC .m compile units: $TOTAL_OBJC_IMPL"
+echo "    ObjC .h + .m files: ~$TOTAL_OBJC_FILES"
+
 FEATURE_PROJECTS_ROOT="$SMOKE_DIR/FeatureProjects"
 FEATURE_SOURCES=()
 FEATURE_MODULES=()
@@ -930,7 +940,11 @@ echo "  mixed ObjC + Swift: yes"
 echo "  CocoaPods (Masonry): yes"
 echo "  runtime handshake: yes"
 echo "  Swift injection BEFORE -> AFTER: yes"
-echo "  multi-project Swift FEATURE_BEFORE -> FEATURE_AFTER: yes"
+echo "  feature projects exercised: $FEATURE_PROJECT_COUNT"
+echo "  Swift compile units: $TOTAL_SWIFT"
+echo "  ObjC .m compile units: $TOTAL_OBJC_IMPL"
+echo "  ObjC .h + .m files: ~$TOTAL_OBJC_FILES"
+echo "  every feature project BEFORE -> AFTER: yes"
 echo "  screenshot: $SCREENSHOT_PNG"
 echo "  touch capture command: yes"
 echo "  touch replay -> UIApplication sendEvent: yes"
