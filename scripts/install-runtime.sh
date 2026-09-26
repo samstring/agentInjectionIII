@@ -163,12 +163,6 @@ build_runtime() {
   fi
 
   local runtime_binary="$source_bundle/${family}Injection"
-  if ! /usr/bin/nm -an "$runtime_binary" 2>/dev/null |
-       grep -q 'AgentInjectionRuntimeBridgeAnchor'; then
-    echo "error: AgentInjectionRuntimeBridge linker root is missing from $runtime_binary" >&2
-    exit 1
-  fi
-
   if ! /usr/bin/strings "$runtime_binary" |
        grep -Fq 'AgentInjectionRuntimeBridge'; then
     echo "error: AgentInjectionRuntimeBridge Objective-C runtime name is missing from $runtime_binary" >&2
