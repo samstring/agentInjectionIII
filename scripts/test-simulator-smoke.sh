@@ -438,26 +438,33 @@ DATA_CONTAINER="$(
   xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data
 )"
 MARKER="$DATA_CONTAINER/Documents/agentInjection-smoke.txt"
-FEATURE_MARKER="$DATA_CONTAINER/Documents/agentInjection-feature.txt"
 TOUCH_TARGET="$DATA_CONTAINER/Documents/agentInjection-touch-target.json"
 TOUCH_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch.txt"
 TOUCH_EVENT_MARKER="$DATA_CONTAINER/Documents/agentInjection-touch-event.txt"
 
-echo "==> Diagnose second-project compiler context before injection"
-set +e
-"$CTL" --socket "$SOCKET" doctor "$FEATURE_SOURCE" |
-  tee "$FEATURE_DOCTOR_BEFORE_JSON"
-FEATURE_DOCTOR_BEFORE_STATUS=${PIPESTATUS[0]}
-set -e
-echo "Feature doctor before status: $FEATURE_DOCTOR_BEFORE_STATUS"
-
-echo "==> Verify initial Swift behavior: BEFORE"
+echo "==> Verify initial Swift behavior across app and all feature projects"
 wait_for_marker "BEFORE" "$MARKER"
+for index in $(seq 1 "$FEATURE_PROJECT_COUNT"); do
+  suffix="$(printf '%02d' "$index")"
+  feature_marker="$DATA_CONTAINER/Documents/agentInjection-feature-$suffix.txt"
+  wait_for_marker "FEATURE_${suffix}_BEFORE" "$feature_marker"
+done
 
-echo "==> Verify separate feature project behavior: FEATURE_BEFORE"
-wait_for_marker "FEATURE_BEFORE" "$FEATURE_MARKER"
+echo "==> Diagnose compiler context for every feature project"
+for index in $(seq 0 $((FEATURE_PROJECT_COUNT - 1))); do
+  suffix="$(printf '%02d' $((index + 1)))"
+  feature_source="${FEATURE_SOURCES[$index]}"
+  doctor_json="$ARTIFACTS/feature-$suffix-doctor-before.json"
 
-echo "==> Modify Swift source without rebuilding app"
+  set +e
+  "$CTL" --socket "$SOCKET" doctor "$feature_source" |
+    tee "$doctor_json"
+  doctor_status=${PIPESTATUS[0]}
+  set -e
+  echo "Feature $suffix doctor status: $doctor_status"
+done
+
+echo "==> Modify and inject main-app Swift source without rebuild/relaunch"
 python3 - "$SOURCE" <<'PY'
 from pathlib import Path
 import sys
@@ -470,7 +477,6 @@ if old not in text:
 path.write_text(text.replace(old, new, 1))
 PY
 
-echo "==> Inject changed Swift source"
 set +e
 "$CTL" --socket "$SOCKET" inject "$SOURCE" | tee "$INJECT_JSON"
 INJECT_STATUS=${PIPESTATUS[0]}
@@ -482,53 +488,76 @@ if [ "$INJECT_STATUS" != "0" ]; then
 fi
 json_assert_injected "$INJECT_JSON"
 assert_no_standalone_watcher "$INJECT_JSON"
-
-echo "==> Verify running app changed without rebuild/relaunch: AFTER"
 wait_for_marker "AFTER" "$MARKER"
 
-echo "==> Diagnose second-project compiler context after main injection"
-set +e
-"$CTL" --socket "$SOCKET" doctor "$FEATURE_SOURCE" |
-  tee "$FEATURE_DOCTOR_AFTER_MAIN_JSON"
-FEATURE_DOCTOR_AFTER_STATUS=${PIPESTATUS[0]}
-set -e
-echo "Feature doctor after main status: $FEATURE_DOCTOR_AFTER_STATUS"
-cp "$HOME/.agentInjectionIII/cache/compile-commands.json" \
-  "$ARTIFACTS/compile-commands.json" 2>/dev/null || true
+echo "==> Hot reload every independent feature xcodeproj"
+for index in $(seq 0 $((FEATURE_PROJECT_COUNT - 1))); do
+  suffix="$(printf '%02d' $((index + 1)))"
+  feature_source="${FEATURE_SOURCES[$index]}"
+  feature_marker="$DATA_CONTAINER/Documents/agentInjection-feature-$suffix.txt"
+  feature_inject_json="$ARTIFACTS/feature-$suffix-inject.json"
+  feature_doctor_json="$ARTIFACTS/feature-$suffix-doctor-after-main.json"
 
-echo "==> Modify Swift source in second xcodeproj without rebuilding app"
-python3 - "$FEATURE_SOURCE" <<'PY'
+  echo "    -> Feature $suffix: doctor"
+  set +e
+  "$CTL" --socket "$SOCKET" doctor "$feature_source" |
+    tee "$feature_doctor_json"
+  doctor_status=${PIPESTATUS[0]}
+  set -e
+  echo "       doctor status: $doctor_status"
+
+  echo "    -> Feature $suffix: mutate source"
+  python3 - "$feature_source" "$suffix" <<'PY'
 from pathlib import Path
 import sys
+
 path = Path(sys.argv[1])
+suffix = sys.argv[2]
 text = path.read_text()
-old = '"FEATURE_BEFORE"'
-new = '"FEATURE_AFTER"'
+old = f'"FEATURE_{suffix}_BEFORE"'
+new = f'"FEATURE_{suffix}_AFTER"'
 if old not in text:
-    raise SystemExit("FEATURE_BEFORE marker source was not found")
+    raise SystemExit(
+        f"{old} marker source was not found in {path}"
+    )
 path.write_text(text.replace(old, new, 1))
 PY
 
-echo "==> Inject Swift source from second xcodeproj"
-set +e
-"$CTL" --socket "$SOCKET" inject "$FEATURE_SOURCE" |
-  tee "$FEATURE_INJECT_JSON"
-FEATURE_INJECT_STATUS=${PIPESTATUS[0]}
-set -e
-if [ "$FEATURE_INJECT_STATUS" != "0" ]; then
-  echo "Second-project Swift injection command failed." >&2
-  cat "$DAEMON_LOG" >&2 2>/dev/null || true
-  exit "$FEATURE_INJECT_STATUS"
-fi
-json_assert_injected "$FEATURE_INJECT_JSON"
-assert_no_standalone_watcher "$FEATURE_INJECT_JSON"
+  echo "    -> Feature $suffix: inject"
+  set +e
+  "$CTL" --socket "$SOCKET" inject "$feature_source" |
+    tee "$feature_inject_json"
+  feature_inject_status=${PIPESTATUS[0]}
+  set -e
+
+  if [ "$feature_inject_status" != "0" ]; then
+    echo "Feature $suffix Swift injection failed." >&2
+    cat "$DAEMON_LOG" >&2 2>/dev/null || true
+    exit "$feature_inject_status"
+  fi
+
+  json_assert_injected "$feature_inject_json"
+  assert_no_standalone_watcher "$feature_inject_json"
+
+  echo "    -> Feature $suffix: verify live behavior"
+  wait_for_marker "FEATURE_${suffix}_AFTER" "$feature_marker"
+done
+
+cp "$HOME/.agentInjectionIII/cache/compile-commands.json" \
+  "$ARTIFACTS/compile-commands.json" 2>/dev/null || true
 
 echo "==> Capture framework/rebind symbol diagnostics"
 {
-  echo "=== SmokeFeature.framework symbols ==="
-  /usr/bin/nm -gjU "$FEATURE_FRAMEWORK/SmokeFeature" 2>&1 || true
-  echo
-  echo "=== App debug dylib SmokeFeature references ==="
+  for index in $(seq 0 $((FEATURE_PROJECT_COUNT - 1))); do
+    module="${FEATURE_MODULES[$index]}"
+    feature_framework="${FEATURE_FRAMEWORKS[$index]}"
+    echo "=== $module.framework symbols ==="
+    /usr/bin/nm -gjU "$feature_framework/$module" 2>&1 |
+      grep -E 'SmokeFeature|smokeFeature' || true
+    echo
+  done
+
+  echo "=== App debug dylib feature references ==="
   /usr/bin/nm -gjU "$APP/SimulatorSmokeApp.debug.dylib" 2>&1 |
     grep -E 'SmokeFeature|smokeFeature' || true
   echo
@@ -538,16 +567,7 @@ echo "==> Capture framework/rebind symbol diagnostics"
   echo "=== Preserved injection dylibs ==="
   find /tmp/agentInjectionIII -maxdepth 1 -name '*.dylib' -print 2>/dev/null |
     sort || true
-  for dylib in /tmp/agentInjectionIII/*.dylib; do
-    [ -f "$dylib" ] || continue
-    echo "--- $dylib ---"
-    /usr/bin/nm -gjU "$dylib" 2>&1 |
-      grep -E 'SmokeFeature|smokeFeature' || true
-  done
 } > "$ARTIFACTS/feature-symbols.txt"
-
-echo "==> Verify feature framework changed without rebuild/relaunch"
-wait_for_marker "FEATURE_AFTER" "$FEATURE_MARKER"
 
 echo "==> Verify InjectionNext screenshot command"
 "$CTL" --socket "$SOCKET" screenshot "$SCREENSHOT_PNG" |
