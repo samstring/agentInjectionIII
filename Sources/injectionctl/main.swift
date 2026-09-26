@@ -60,6 +60,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
       injectionctl [--socket PATH] diagnostics [LIMIT]
+      injectionctl diagnostic-log [LIMIT]
       injectionctl [--socket PATH] [--target ID] screenshot [OUTPUT.png]
       injectionctl [--socket PATH] [--target ID] touch capture
       injectionctl [--socket PATH] [--target ID] touch read
@@ -143,6 +144,79 @@ let options = parseGlobalOptions()
 
 guard let command = options.arguments.first else {
     fatalUsage("Missing command.")
+}
+
+private struct DiagnosticLogOutput:
+    Codable {
+    let ok: Bool
+    let path: String
+    let lines: [String]
+}
+
+private func emitDiagnosticLog(
+    limit: Int
+) -> Never {
+    let path =
+        UnifiedDiagnosticLog
+            .defaultLogURL
+            .path
+
+    do {
+        let output =
+            DiagnosticLogOutput(
+                ok: true,
+                path: path,
+                lines:
+                    try UnifiedDiagnosticLog
+                        .tail(
+                            limit: limit
+                        )
+            )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [
+            .prettyPrinted,
+            .sortedKeys
+        ]
+        let data =
+            try encoder.encode(output)
+        FileHandle.standardOutput
+            .write(data)
+        FileHandle.standardOutput
+            .write(Data([0x0A]))
+        exit(0)
+    } catch {
+        emit(
+            .failure(
+                code:
+                    "DIAGNOSTIC_LOG_READ_FAILED",
+                message:
+                    "Unable to read \(path): \(error)"
+            )
+        )
+        exit(5)
+    }
+}
+
+if command == "diagnostic-log" {
+    guard options.arguments.count <= 2 else {
+        fatalUsage(
+            "diagnostic-log accepts at most one LIMIT."
+        )
+    }
+
+    var limit = 200
+    if options.arguments.count == 2 {
+        guard let parsed =
+                Int(options.arguments[1]),
+              parsed > 0 else {
+            fatalUsage(
+                "diagnostic-log limit must be a positive integer."
+            )
+        }
+        limit = parsed
+    }
+
+    emitDiagnosticLog(limit: limit)
 }
 
 let request: ControlRequest
