@@ -105,15 +105,34 @@ feature_specs = (1..feature_project_count).map do |index|
   objc_group = project.main_group
     .new_group('GeneratedObjC', 'GeneratedObjC')
   objc_fillers_per_feature.times do |filler_index|
-    name = format('ObjCFiller%03d.m', filler_index)
+    stem = format('ObjCFiller%03d', filler_index)
+    header_name = "#{stem}.h"
+    implementation_name = "#{stem}.m"
     symbol =
       "smoke_feature_#{suffix}_objc_filler_" \
       "#{format('%03d', filler_index)}"
+
     File.write(
-      File.join(objc_generated, name),
-      "int #{symbol}(void) { return #{filler_index}; }\n"
+      File.join(objc_generated, header_name),
+      <<~HEADER
+        #import <Foundation/Foundation.h>
+
+        FOUNDATION_EXPORT NSInteger #{symbol}(void);
+      HEADER
     )
-    ref = objc_group.new_file(name)
+    File.write(
+      File.join(objc_generated, implementation_name),
+      <<~OBJC
+        #import "#{header_name}"
+
+        NSInteger #{symbol}(void) {
+            return #{filler_index};
+        }
+      OBJC
+    )
+
+    objc_group.new_file(header_name)
+    ref = objc_group.new_file(implementation_name)
     target.source_build_phase.add_file_reference(ref)
   end
 
@@ -248,19 +267,32 @@ end
 
 main_objc_group = generated.new_group('MainObjC', 'MainObjC')
 main_objc_fillers.times do |index|
-  name = format('LegacyObjC%04d.m', index)
+  stem = format('LegacyObjC%04d', index)
+  header_name = "#{stem}.h"
+  implementation_name = "#{stem}.m"
   symbol = format('agent_legacy_objc_%04d', index)
+
   File.write(
-    File.join(main_objc_dir, name),
-    <<~OBJC
+    File.join(main_objc_dir, header_name),
+    <<~HEADER
       #import <Foundation/Foundation.h>
+
+      FOUNDATION_EXPORT NSInteger #{symbol}(NSInteger value);
+    HEADER
+  )
+  File.write(
+    File.join(main_objc_dir, implementation_name),
+    <<~OBJC
+      #import "#{header_name}"
 
       NSInteger #{symbol}(NSInteger value) {
           return value + #{index};
       }
     OBJC
   )
-  ref = main_objc_group.new_file(name)
+
+  main_objc_group.new_file(header_name)
+  ref = main_objc_group.new_file(implementation_name)
   target.source_build_phase.add_file_reference(ref)
 end
 
@@ -353,5 +385,6 @@ puts(
   "app Swift=#{app_swift_total}, " \
   "app ObjC=#{app_objc_total}, " \
   "total Swift=#{feature_swift_total + app_swift_total}, " \
-  "total ObjC=#{feature_objc_total + app_objc_total}"
+  "ObjC implementations=#{feature_objc_total + app_objc_total}, " \
+  "ObjC headers≈#{feature_objc_total + app_objc_total}"
 )
