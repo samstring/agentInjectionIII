@@ -144,6 +144,62 @@ private func fatalUsage(_ message: String) -> Never {
 }
 
 let options = parseOptions()
+
+let unifiedLog: UnifiedDiagnosticLog?
+do {
+    let log =
+        try UnifiedDiagnosticLog
+            .configureDefault()
+    log.redirectStandardStreams()
+    unifiedLog = log
+} catch {
+    unifiedLog = nil
+    fputs(
+        "injectiond: unable to initialize unified diagnostics: \(error)\n",
+        stderr
+    )
+}
+
+let daemonLock: DaemonSingletonLock
+do {
+    daemonLock =
+        try DaemonSingletonLock()
+} catch DaemonSingletonLockError.alreadyRunning {
+    unifiedLog?.append(
+        category: "daemon",
+        level: "info",
+        message:
+            "A control-layer owner is already running; this injectiond instance will exit."
+    )
+    exit(0)
+} catch {
+    unifiedLog?.append(
+        category: "daemon",
+        level: "error",
+        message:
+            "Unable to acquire control-layer singleton lock: \(error)"
+    )
+    fputs(
+        "injectiond: unable to acquire singleton lock: \(error)\n",
+        stderr
+    )
+    exit(1)
+}
+
+unifiedLog?.append(
+    category: "daemon",
+    level: "info",
+    message: "Starting the single AgentInjectionIII control layer.",
+    metadata: [
+        "pid": String(getpid()),
+        "socket": options.socketPath,
+        "runtime_port":
+            String(options.runtimePort),
+        "trace_port":
+            String(options.tracePort)
+    ]
+)
+
 let logStore = AgentLogStore()
 let runtimeServer = InjectionNextRuntimeServer(
     port: options.runtimePort,
