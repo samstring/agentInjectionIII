@@ -1018,7 +1018,6 @@ private final class DaemonController:
             self.ownedCodeSignIdentity = nil
             try? self.logHandle?.close()
             self.logHandle = nil
-            self.removeStaleSocket()
             self.launchDaemon()
         }
     }
@@ -1055,8 +1054,6 @@ private final class DaemonController:
                 resolveDaemonURL() else {
             return
         }
-
-        removeStaleSocket()
 
         let process = Process()
         process.executableURL = daemonURL
