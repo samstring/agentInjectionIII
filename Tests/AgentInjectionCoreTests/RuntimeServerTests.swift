@@ -50,6 +50,18 @@ final class RuntimeServerTests: XCTestCase {
                     fd: fd
                 )
 
+                try Self.writeInt(5, fd: fd)
+                try Self.writeString(
+                    "/tmp/AgentInjectionProject",
+                    fd: fd
+                )
+
+                try Self.writeInt(8, fd: fd)
+                try Self.writeString(
+                    "/tmp/AgentInjectionProject/TestApp",
+                    fd: fd
+                )
+
                 XCTAssertEqual(try Self.readInt(fd: fd), 1)
                 let copiedDylib = try Self.readString(fd: fd)
                 XCTAssertTrue(
@@ -94,6 +106,18 @@ final class RuntimeServerTests: XCTestCase {
         )
         XCTAssertNotNil(
             readyStatus.temporaryPath
+        )
+        XCTAssertEqual(
+            readyStatus.projectRoot,
+            "/tmp/AgentInjectionProject"
+        )
+        XCTAssertEqual(
+            readyStatus.executable,
+            "/tmp/AgentInjectionProject/TestApp"
+        )
+        XCTAssertEqual(
+            runtime.targets().first?.projectRoot,
+            "/tmp/AgentInjectionProject"
         )
 
         let result = runtime.loadDylib(path: inputDylib.path)
