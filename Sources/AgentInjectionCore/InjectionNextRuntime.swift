@@ -1829,6 +1829,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
+    func restorePendingSources(
+        _ files: [String]
+    ) {
+        _ = pendingSources.add(files)
+    }
+
     public func loadDylib(
         path: String,
         target: String?
