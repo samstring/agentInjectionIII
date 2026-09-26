@@ -315,21 +315,17 @@ public final class MultiProjectInjectionBackend:
             return projectNotFoundInjection(projectID)
         }
 
-        let selected = selectedTarget(
-            for: session,
-            explicit: target
-        )
-
-        if let target,
-           selected == nil {
-            return targetMismatchInjection(
-                target: target,
-                projectID: projectID
+        let pending = session.backend.pendingChanges()
+        guard !pending.files.isEmpty else {
+            return BackendInjectionResponse(
+                results: []
             )
         }
 
-        return session.backend.injectPending(
-            target: selected
+        return inject(
+            files: pending.files,
+            projectID: projectID,
+            target: target
         )
     }
 
@@ -366,22 +362,54 @@ public final class MultiProjectInjectionBackend:
             )
         }
 
-        let selected = selectedTarget(
-            for: session,
-            explicit: target
-        )
+        if let target {
+            guard selectedTarget(
+                for: session,
+                explicit: target
+            ) != nil else {
+                return targetMismatchInjection(
+                    target: target,
+                    projectID: projectID
+                )
+            }
 
-        if let target,
-           selected == nil {
-            return targetMismatchInjection(
-                target: target,
-                projectID: projectID
+            return session.backend.inject(
+                files: files,
+                target: target
             )
         }
 
-        return session.backend.inject(
-            files: files,
-            target: selected
+        let matchingTargets = targets(
+            for: session
+        )
+        .filter(\.connected)
+
+        guard !matchingTargets.isEmpty else {
+            return session.backend.inject(
+                files: files,
+                target: nil
+            )
+        }
+
+        var results: [InjectionResult] = []
+        var firstError: ControlError?
+
+        for runtime in matchingTargets {
+            let response = session.backend.inject(
+                files: files,
+                target: runtime.id
+            )
+            results.append(
+                contentsOf: response.results
+            )
+            if firstError == nil {
+                firstError = response.error
+            }
+        }
+
+        return BackendInjectionResponse(
+            results: results,
+            error: firstError
         )
     }
 
@@ -550,14 +578,10 @@ public final class MultiProjectInjectionBackend:
                 continue
             }
 
-            let selected = selectedTarget(
-                for: session,
-                explicit: nil
+            let response = injectPending(
+                projectID: session.id,
+                target: nil
             )
-            let response =
-                session.backend.injectPending(
-                    target: selected
-                )
             all.append(contentsOf: response.results)
             if firstError == nil {
                 firstError = response.error
