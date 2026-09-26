@@ -1,4 +1,6 @@
 import XCTest
+import Foundation
+import Darwin
 @testable import AgentInjectionCore
 
 final class MultiProjectInjectionBackendTests:
