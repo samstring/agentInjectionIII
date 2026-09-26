@@ -480,8 +480,15 @@ public final class MultiProjectInjectionBackend:
     // MARK: - Legacy InjectionBackend
 
     public func status() -> BackendStatus {
-        let targets = runtimeServer.targets()
-        let connected = targets.filter(\.connected)
+        let current = snapshotSessions()
+        let allTargets = runtimeServer.targets()
+        let connected = allTargets.filter {
+            $0.connected &&
+            matchingSession(
+                for: $0,
+                among: current
+            ) != nil
+        }
         let latest = connected.last
 
         return BackendStatus(
@@ -524,7 +531,7 @@ public final class MultiProjectInjectionBackend:
             platform: latest?.platform,
             arch: latest?.arch,
             temporaryPath: latest?.temporaryPath,
-            detail: "\(snapshotSessions().count) project session(s), \(connected.count) connected runtime target(s)."
+            detail: "\(current.count) project session(s), \(connected.count) matched runtime target(s), \(allTargets.count - connected.count) unmatched target(s)."
         )
     }
 
@@ -563,8 +570,14 @@ public final class MultiProjectInjectionBackend:
 
         let current = snapshotSessions()
         if current.count == 1 {
-            return current[0].backend.injectPending(
-                target: target
+            if let target {
+                return current[0].backend.injectPending(
+                    target: target
+                )
+            }
+            return injectPending(
+                projectID: current[0].id,
+                target: nil
             )
         }
 
@@ -601,9 +614,16 @@ public final class MultiProjectInjectionBackend:
         let current = snapshotSessions()
 
         if current.count == 1 {
-            return current[0].backend.inject(
+            if let target {
+                return current[0].backend.inject(
+                    files: files,
+                    target: target
+                )
+            }
+            return inject(
                 files: files,
-                target: target
+                projectID: current[0].id,
+                target: nil
             )
         }
 
