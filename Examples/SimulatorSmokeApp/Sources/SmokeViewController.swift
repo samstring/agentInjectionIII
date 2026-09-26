@@ -153,6 +153,20 @@ final class SmokeViewController: UIViewController {
             atomically: true,
             encoding: .utf8
         )
+
+        for feature in smokeFeatureMessages() {
+            guard let featureMarker = documentURL(
+                named: "agentInjection-feature-\(feature.id).txt"
+            ) else {
+                continue
+            }
+
+            try? feature.message.write(
+                to: featureMarker,
+                atomically: true,
+                encoding: .utf8
+            )
+        }
     }
 
     private func writeTouchTarget() {

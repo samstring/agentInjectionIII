@@ -527,7 +527,7 @@ private final class InjectionRuntimeClient {
                     fileURLWithPath: tmpPath
                 )
                 .appendingPathComponent(
-                    "agent_injection_\(UUID().uuidString).dylib"
+                    "eval_injection_\(UUID().uuidString).dylib"
                 )
 
                 try FileManager.default.copyItem(
@@ -2315,7 +2315,8 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             path.map { normalize(path: $0) }
         let compilerDiagnostics = compiler.diagnostics(
             source: normalizedSource,
-            platform: runtime.platform
+            platform: runtime.platform,
+            arch: runtime.arch
         )
         let buildSystem = compiler.buildSystem(
             for: normalizedSource
@@ -2376,16 +2377,28 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                     message: "Bazel aquery compiler provider is active; Xcode .xcactivitylog files are optional."
                 )
             )
+        } else if compilerDiagnostics.buildLogCount > 0 {
+            checks.append(
+                DoctorCheck(
+                    name: "build_logs",
+                    state: .pass,
+                    message: "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
+                )
+            )
+        } else if buildSystem == "intercepted+xcode" {
+            checks.append(
+                DoctorCheck(
+                    name: "build_logs",
+                    state: .warning,
+                    message: "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot), but intercepted Swift compiler contexts are available. Injection can proceed; build-log fallback is unavailable."
+                )
+            )
         } else {
             checks.append(
                 DoctorCheck(
                     name: "build_logs",
-                    state: compilerDiagnostics.buildLogCount > 0
-                        ? .pass
-                        : .fail,
-                    message: compilerDiagnostics.buildLogCount > 0
-                        ? "Found \(compilerDiagnostics.buildLogCount) Xcode build log(s). Newest: \(compilerDiagnostics.newestBuildLog ?? "unknown")"
-                        : "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
+                    state: .fail,
+                    message: "No .xcactivitylog files found under \(compilerDiagnostics.derivedDataRoot). Build the app once in Xcode."
                 )
             )
         }
@@ -2458,6 +2471,26 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
             )
 
             if compilerDiagnostics.sourceExists == true {
+                let modules = compilerDiagnostics
+                    .compileCommandModules
+                    .joined(separator: ", ")
+                let architectures = compilerDiagnostics
+                    .compileCommandArchitectures
+                    .joined(separator: ", ")
+                let contextSummary = [
+                    compilerDiagnostics.compileCommandCandidateCount.map {
+                        "candidates=\($0)"
+                    },
+                    modules.isEmpty
+                        ? nil
+                        : "modules=\(modules)",
+                    architectures.isEmpty
+                        ? nil
+                        : "arch=\(architectures)"
+                ]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+
                 checks.append(
                     DoctorCheck(
                         name: "compile_command",
@@ -2465,10 +2498,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
                             ? .pass
                             : .fail,
                         message: compilerDiagnostics.compileCommandFound == true
-                            ? "Found a matching \(buildSystem) compiler command for this source."
-                            : (buildSystem == "bazel"
-                                ? "No matching Bazel compiler command found. Verify bazel/bazelisk and the app target, then retry."
-                                : "No matching compiler command found. Build the target with EMIT_FRONTEND_COMMAND_LINES=YES and COMPILATION_CACHE_ENABLE_CACHING=NO.")
+                            ? "Found a matching \(buildSystem) compiler context for this source (\(contextSummary))."
+                            : (compilerDiagnostics.compileCommandAmbiguous == true
+                                ? "Multiple compiler contexts match this source (\(contextSummary)). Build/select one target context before injecting."
+                                : (buildSystem == "bazel"
+                                    ? "No matching Bazel compiler command found. Verify bazel/bazelisk and the app target, then retry."
+                                    : "No matching compiler command found (\(contextSummary)). Build the target with EMIT_FRONTEND_COMMAND_LINES=YES and COMPILATION_CACHE_ENABLE_CACHING=NO."))
                     )
                 )
             }

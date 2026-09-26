@@ -1,6 +1,11 @@
 import Foundation
 import Darwin
 import AgentInjectionCore
+import AgentInjectionHostShim
+
+// Force-link the host-only InjectionNext sentinel before Objective-C +load
+// runs so InjectionLite cannot start its standalone save watcher here.
+AgentInjectionLinkHostShim()
 
 struct DaemonOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"

@@ -1,4 +1,5 @@
 import Foundation
+import AgentInjectionHostShim
 import InjectionLite
 
 /// Headless source recompiler inspired by InjectionLite's build-log strategy.
@@ -24,12 +25,41 @@ public final class BuildLogCompiler {
         public let source: String?
         public let sourceExists: Bool?
         public let compileCommandFound: Bool?
+        public let compileCommandCandidateCount: Int?
+        public let compileCommandModules: [String]
+        public let compileCommandArchitectures: [String]
+        public let compileCommandAmbiguous: Bool?
     }
 
     private struct CachedCommand: Codable {
         let command: String
         let logPath: String
         let workingDirectory: String?
+        let platform: String?
+        let arch: String?
+        let module: String?
+        let targetTriple: String?
+        let debugConfiguration: Bool?
+
+        init(
+            command: String,
+            logPath: String,
+            workingDirectory: String?,
+            platform: String? = nil,
+            arch: String? = nil,
+            module: String? = nil,
+            targetTriple: String? = nil,
+            debugConfiguration: Bool? = nil
+        ) {
+            self.command = command
+            self.logPath = logPath
+            self.workingDirectory = workingDirectory
+            self.platform = platform
+            self.arch = arch
+            self.module = module
+            self.targetTriple = targetTriple
+            self.debugConfiguration = debugConfiguration
+        }
     }
 
     private let projectRoot: String?
@@ -64,6 +94,11 @@ public final class BuildLogCompiler {
             "-lXCTestSwiftSupport"
         ]
     ) {
+        // Force the host sentinel object into injectionctl/injectiond so
+        // InjectionLite sees an InjectionNext class during Objective-C +load
+        // and does not start its standalone save watcher.
+        AgentInjectionLinkHostShim()
+
         self.projectRoot = projectRoot
         self.derivedDataRoot = derivedDataRoot
         self.selectedXcodePath = xcodePath
@@ -147,7 +182,7 @@ public final class BuildLogCompiler {
 
         cacheLock.lock()
         for key in memoryCache.keys {
-            if let separator = key.lastIndex(of: "|") {
+            if let separator = key.firstIndex(of: "|") {
                 let source = String(key[..<separator])
                 if source.hasSuffix(".swift") {
                     sources.insert(source)
@@ -262,7 +297,8 @@ public final class BuildLogCompiler {
 
     public func diagnostics(
         source: String? = nil,
-        platform: String? = nil
+        platform: String? = nil,
+        arch: String? = nil
     ) -> Diagnostics {
         ingestInterceptedCommands()
         let logs = buildLogsNewestFirst()
@@ -284,35 +320,55 @@ public final class BuildLogCompiler {
                 newestBuildLog: logs.first?.path,
                 source: nil,
                 sourceExists: nil,
-                compileCommandFound: nil
+                compileCommandFound: nil,
+                compileCommandCandidateCount: nil,
+                compileCommandModules: [],
+                compileCommandArchitectures: [],
+                compileCommandAmbiguous: nil
             )
         }
 
         let normalized = standardized(source)
         let exists = fileManager.fileExists(atPath: normalized)
         let requestedPlatform = platform ?? ""
-        let command: CachedCommand?
+        let requestedArch = arch ?? ""
+
+        let candidates: [CachedCommand]
+        let selection: Result<CachedCommand, ControlError>?
         if exists {
-            let exactKey = normalized + "|" + requestedPlatform
-            if let cached = cachedCommand(
-                for: exactKey
-            ) {
-                command = cached
-            } else if requestedPlatform.isEmpty {
-                cacheLock.lock()
-                command = memoryCache.first {
-                    $0.key.hasPrefix(normalized + "|")
-                }?.value
-                cacheLock.unlock()
-            } else {
-                command = locateCompilationCommand(
-                    source: normalized,
-                    platform: requestedPlatform
-                )
-            }
+            candidates = compilationCandidates(
+                source: normalized,
+                platform: requestedPlatform
+            )
+            selection = selectCompilationCommand(
+                from: candidates,
+                requestedArch: requestedArch
+            )
         } else {
-            command = nil
+            candidates = []
+            selection = nil
         }
+
+        let found: Bool
+        let ambiguous: Bool
+        switch selection {
+        case .success:
+            found = true
+            ambiguous = false
+        case .failure(let error):
+            found = false
+            ambiguous = error.code == "COMPILE_COMMAND_AMBIGUOUS"
+        case nil:
+            found = false
+            ambiguous = false
+        }
+
+        let modules = Array(
+            Set(candidates.compactMap { $0.module })
+        ).sorted()
+        let architectures = Array(
+            Set(candidates.compactMap { $0.arch })
+        ).sorted()
 
         return Diagnostics(
             derivedDataRoot: root,
@@ -320,7 +376,11 @@ public final class BuildLogCompiler {
             newestBuildLog: logs.first?.path,
             source: normalized,
             sourceExists: exists,
-            compileCommandFound: command != nil
+            compileCommandFound: found,
+            compileCommandCandidateCount: candidates.count,
+            compileCommandModules: modules,
+            compileCommandArchitectures: architectures,
+            compileCommandAmbiguous: ambiguous
         )
     }
 
@@ -371,6 +431,9 @@ public final class BuildLogCompiler {
 
             let workingDirectory = decodeShellToken(rawWorkingDirectory)
             let platform = interceptedPlatform(from: command)
+            let arch = commandArchitecture(from: command)
+            let module = commandModule(from: command)
+            let targetTriple = commandTargetTriple(from: command)
             let primaries = interceptedPrimaryFiles(from: command)
 
             for source in primaries {
@@ -379,15 +442,25 @@ public final class BuildLogCompiler {
                     continue
                 }
 
+                let cached = CachedCommand(
+                    command: command,
+                    logPath: interceptionLogURL.path,
+                    workingDirectory: workingDirectory.isEmpty
+                        ? projectRoot
+                        : workingDirectory,
+                    platform: platform,
+                    arch: arch,
+                    module: module,
+                    targetTriple: targetTriple,
+                    debugConfiguration: isDebugCommand(command)
+                )
                 captured.append((
-                    normalized + "|" + platform,
-                    CachedCommand(
-                        command: command,
-                        logPath: interceptionLogURL.path,
-                        workingDirectory: workingDirectory.isEmpty
-                            ? projectRoot
-                            : workingDirectory
-                    )
+                    cacheKey(
+                        source: normalized,
+                        platform: platform,
+                        command: cached
+                    ),
+                    cached
                 ))
             }
         }
@@ -419,6 +492,50 @@ public final class BuildLogCompiler {
         }
 
         return ""
+    }
+
+    private func commandTargetTriple(
+        from command: String
+    ) -> String? {
+        guard let token = firstRegexCapture(
+            #" -target ([^\s]+)"#,
+            in: command
+        ) else {
+            return nil
+        }
+        return decodeShellToken(token)
+    }
+
+    private func commandArchitecture(
+        from command: String
+    ) -> String? {
+        guard let triple = commandTargetTriple(
+            from: command
+        ), let separator = triple.firstIndex(of: "-") else {
+            return nil
+        }
+        return String(triple[..<separator])
+    }
+
+    private func commandModule(
+        from command: String
+    ) -> String? {
+        guard let token = firstRegexCapture(
+            #" -module-name ([^\s]+)"#,
+            in: command
+        ) else {
+            return nil
+        }
+        return decodeShellToken(token)
+    }
+
+    private func isDebugCommand(
+        _ command: String
+    ) -> Bool {
+        command.contains(" -D DEBUG ") ||
+            command.contains(" -DDEBUG ") ||
+            command.contains(" -DDEBUG=1 ") ||
+            command.contains(" -D DEBUG=1 ")
     }
 
     private func interceptedPrimaryFiles(
@@ -456,6 +573,20 @@ public final class BuildLogCompiler {
         arch: String
     ) -> Result<Artifact, ControlError> {
         ingestInterceptedCommands()
+        return compileAndLink(
+            source: source,
+            platform: platform,
+            arch: arch,
+            allowCachedRetry: true
+        )
+    }
+
+    private func compileAndLink(
+        source: String,
+        platform: String,
+        arch: String,
+        allowCachedRetry: Bool
+    ) -> Result<Artifact, ControlError> {
         let source = standardized(source)
 
         guard fileManager.fileExists(atPath: source) else {
@@ -478,31 +609,62 @@ public final class BuildLogCompiler {
             )
         }
 
-        let cacheKey = source + "|" + platform
         let located: CachedCommand
         let usedPersistentOrMemoryCache: Bool
 
-        if let cached = cachedCommand(for: cacheKey) {
-            located = cached
-            usedPersistentOrMemoryCache = true
+        let cachedCandidates = cachedCompilationCandidates(
+            source: source,
+            platform: platform
+        )
+        if let cachedSelection = selectCompilationCommand(
+            from: cachedCandidates,
+            requestedArch: arch
+        ) {
+            switch cachedSelection {
+            case .success(let cached):
+                located = cached
+                usedPersistentOrMemoryCache = true
+            case .failure:
+                switch locateCompilationCommand(
+                    source: source,
+                    platform: platform,
+                    arch: arch
+                ) {
+                case .success(let command):
+                    located = command
+                    usedPersistentOrMemoryCache = false
+                    store(
+                        command,
+                        for: cacheKey(
+                            source: source,
+                            platform: platform,
+                            command: command
+                        )
+                    )
+                case .failure(let error):
+                    return .failure(error)
+                }
+            }
         } else {
-            guard let command = locateCompilationCommand(
+            switch locateCompilationCommand(
                 source: source,
-                platform: platform
-            ) else {
-                return .failure(
-                    ControlError(
-                        code: "COMPILE_COMMAND_NOT_FOUND",
-                        message: """
-                        Could not find the original Xcode compile command for \(source).                         Build the app once with this source in the target. For Swift on                         modern Xcode, set EMIT_FRONTEND_COMMAND_LINES=YES in Debug.
-                        """
+                platform: platform,
+                arch: arch
+            ) {
+            case .success(let command):
+                located = command
+                usedPersistentOrMemoryCache = false
+                store(
+                    command,
+                    for: cacheKey(
+                        source: source,
+                        platform: platform,
+                        command: command
                     )
                 )
+            case .failure(let error):
+                return .failure(error)
             }
-
-            located = command
-            usedPersistentOrMemoryCache = false
-            store(command, for: cacheKey)
         }
 
         let workDir = "/tmp/agentInjectionIII"
@@ -566,7 +728,10 @@ public final class BuildLogCompiler {
                 temporaryInputs = prepared.temporaryFiles
 
             case .failure(let error):
-                invalidate(cacheKey)
+                invalidateCommands(
+                    source: source,
+                    platform: platform
+                )
                 return .failure(error)
             }
         }
@@ -598,37 +763,52 @@ public final class BuildLogCompiler {
 
         guard compileResult.status == 0,
               fileManager.fileExists(atPath: object) else {
-            invalidate(cacheKey)
-
-            if usedPersistentOrMemoryCache {
-                return compileAndLink(
-                    source: source,
-                    platform: platform,
-                    arch: arch
-                )
-            }
-
             let diagnostics = parseCompilerDiagnostics(
                 compileResult.combinedOutput
             )
+            let compileFailure = ControlError(
+                code: "COMPILE_FAILED",
+                message: """
+                Failed to recompile \(source).
 
-            return .failure(
-                ControlError(
-                    code: "COMPILE_FAILED",
-                    message: """
-                    Failed to recompile \(source).
+                Command:
+                \(compileCommand)
 
-                    Command:
-                    \(compileCommand)
-
-                    Output:
-                    \(compileResult.combinedOutput)
-                    """,
-                    diagnostics: diagnostics.isEmpty
-                        ? nil
-                        : diagnostics
-                )
+                Output:
+                \(compileResult.combinedOutput)
+                """,
+                diagnostics: diagnostics.isEmpty
+                    ? nil
+                    : diagnostics
             )
+
+            invalidateCommands(
+                source: source,
+                platform: platform
+            )
+
+            if usedPersistentOrMemoryCache && allowCachedRetry {
+                switch compileAndLink(
+                    source: source,
+                    platform: platform,
+                    arch: arch,
+                    allowCachedRetry: false
+                ) {
+                case .success(let artifact):
+                    return .success(artifact)
+                case .failure(let retryError):
+                    // If cache fallback cannot rediscover a command, preserve
+                    // the original compiler failure. It contains the command
+                    // and stderr needed to diagnose why the captured context
+                    // was rejected in the first place.
+                    if retryError.code == "COMPILE_COMMAND_NOT_FOUND" {
+                        return .failure(compileFailure)
+                    }
+                    return .failure(retryError)
+                }
+            }
+
+            return .failure(compileFailure)
         }
 
         let linkArguments = makeLinkArguments(
@@ -732,6 +912,11 @@ public final class BuildLogCompiler {
     }
 
     public func remove(_ artifact: Artifact) {
+        if ProcessInfo.processInfo.environment[
+            "AGENT_INJECTION_KEEP_ARTIFACTS"
+        ] != nil {
+            return
+        }
         try? fileManager.removeItem(atPath: artifact.object)
         try? fileManager.removeItem(atPath: artifact.dylib)
     }
@@ -746,58 +931,202 @@ public final class BuildLogCompiler {
         source: String,
         activityLogPath: String
     ) -> Result<PreparedCompileCommand, ControlError> {
-        guard source.hasSuffix(".swift"),
-              let token = firstRegexCapture(
+        var preparedCommand = command
+        var temporaryFiles: [String] = []
+
+        if source.hasSuffix(".swift"),
+           let token = firstRegexCapture(
                 " -filelist (\(quotedArgumentRegex))",
-                in: command
-              ) else {
-            return .success(
-                PreparedCompileCommand(
-                    command: command,
-                    temporaryFiles: []
+                in: preparedCommand
+           ) {
+            let originalFileList = decodeShellToken(token)
+
+            if !originalFileList.isEmpty,
+               !fileManager.fileExists(atPath: originalFileList) {
+                guard activityLogPath.hasSuffix(".xcactivitylog"),
+                      let recovered = recoverFileList(
+                        source: source,
+                        activityLogPath: activityLogPath
+                      ) else {
+                    return .failure(
+                        ControlError(
+                            code: "FILELIST_MISSING",
+                            message: """
+                            Swift compiler file list no longer exists: \(originalFileList). Rebuild the app in Xcode, then retry injection. EMIT_FRONTEND_COMMAND_LINES=YES is recommended for Debug.
+                            """
+                        )
+                    )
+                }
+
+                preparedCommand = replacingRegex(
+                    " -filelist \(quotedArgumentRegex)",
+                    in: preparedCommand,
+                    with: " -filelist \(shellQuote(recovered))"
                 )
-            )
+                temporaryFiles.append(recovered)
+            }
         }
 
-        let originalFileList = decodeShellToken(token)
-        guard !originalFileList.isEmpty,
-              !fileManager.fileExists(atPath: originalFileList) else {
-            return .success(
-                PreparedCompileCommand(
-                    command: command,
-                    temporaryFiles: []
-                )
-            )
-        }
-
-        guard activityLogPath.hasSuffix(".xcactivitylog"),
-              let recovered = recoverFileList(
-                source: source,
-                activityLogPath: activityLogPath
-              ) else {
-            return .failure(
-                ControlError(
-                    code: "FILELIST_MISSING",
-                    message: """
-                    Swift compiler file list no longer exists: \(originalFileList).                     Rebuild the app in Xcode, then retry injection.                     EMIT_FRONTEND_COMMAND_LINES=YES is recommended for Debug.
-                    """
-                )
-            )
-        }
-
-        let replacement = " -filelist \(shellQuote(recovered))"
-        let rewritten = replacingRegex(
-            " -filelist \(quotedArgumentRegex)",
-            in: command,
-            with: replacement
+        preparedCommand = rewriteMissingVFSOverlays(
+            in: preparedCommand
         )
 
         return .success(
             PreparedCompileCommand(
-                command: rewritten,
-                temporaryFiles: [recovered]
+                command: preparedCommand,
+                temporaryFiles: temporaryFiles
             )
         )
+    }
+
+    func rewriteMissingVFSOverlays(
+        in command: String
+    ) -> String {
+        let pattern =
+            " -Xcc -ivfsoverlay -Xcc (\(quotedArgumentRegex))"
+
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern
+        ) else {
+            return command
+        }
+
+        var rewritten = command
+        let matches = regex.matches(
+            in: command,
+            range: NSRange(
+                command.startIndex..<command.endIndex,
+                in: command
+            )
+        )
+
+        for match in matches.reversed() {
+            guard match.numberOfRanges > 1,
+                  let fullRange = Range(
+                    match.range(at: 0),
+                    in: rewritten
+                  ),
+                  let tokenRange = Range(
+                    match.range(at: 1),
+                    in: rewritten
+                  )
+            else {
+                continue
+            }
+
+            let token = String(rewritten[tokenRange])
+            let overlay = decodeShellToken(token)
+            guard !overlay.isEmpty,
+                  !fileManager.fileExists(atPath: overlay)
+            else {
+                continue
+            }
+
+            if let recovered = recoverVFSOverlay(
+                missing: overlay
+            ) {
+                rewritten.replaceSubrange(
+                    tokenRange,
+                    with: shellQuote(recovered)
+                )
+                continue
+            }
+
+            // Xcode may delete the generated product-header overlay when a
+            // different project/scheme reuses the same DerivedData. The
+            // compiler otherwise fails before it can discover whether that
+            // overlay is actually needed by this Swift source. Header maps
+            // and the remaining search paths stay intact.
+            guard URL(
+                fileURLWithPath: overlay
+            ).lastPathComponent == "all-product-headers.yaml"
+            else {
+                continue
+            }
+
+            rewritten.removeSubrange(fullRange)
+        }
+
+        return rewritten
+    }
+
+    private func recoverVFSOverlay(
+        missing: String
+    ) -> String? {
+        let missingURL = URL(fileURLWithPath: missing)
+        let vfsDirectory = missingURL.deletingLastPathComponent()
+        let configurationDirectory =
+            vfsDirectory.deletingLastPathComponent()
+        let directoryName = vfsDirectory.lastPathComponent
+
+        guard let vfsRange = directoryName.range(
+            of: "-VFS-",
+            options: .backwards
+        ) else {
+            return nil
+        }
+
+        let beforeVFS = String(
+            directoryName[..<vfsRange.lowerBound]
+        )
+        let vfsSuffix = String(
+            directoryName[vfsRange.lowerBound...]
+        )
+
+        guard let hashSeparator = beforeVFS.lastIndex(
+            of: "-"
+        ) else {
+            return nil
+        }
+
+        let targetPrefix = String(
+            beforeVFS[..<hashSeparator]
+        ) + "-"
+
+        guard let directories =
+                try? fileManager.contentsOfDirectory(
+                    at: configurationDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+        else {
+            return nil
+        }
+
+        let candidates = directories.compactMap { directory
+            -> URL? in
+            let name = directory.lastPathComponent
+            guard name.hasPrefix(targetPrefix),
+                  name.hasSuffix(vfsSuffix),
+                  directory.path != vfsDirectory.path
+            else {
+                return nil
+            }
+
+            let candidate = directory.appendingPathComponent(
+                missingURL.lastPathComponent
+            )
+            return fileManager.fileExists(
+                atPath: candidate.path
+            ) ? candidate : nil
+        }
+
+        return candidates
+            .sorted {
+                let left = (
+                    try? $0.resourceValues(
+                        forKeys: [.contentModificationDateKey]
+                    ).contentModificationDate
+                ) ?? .distantPast
+                let right = (
+                    try? $1.resourceValues(
+                        forKeys: [.contentModificationDateKey]
+                    ).contentModificationDate
+                ) ?? .distantPast
+                return left > right
+            }
+            .first?
+            .path
     }
 
     private func recoverFileList(
@@ -934,8 +1263,9 @@ public final class BuildLogCompiler {
 
     private func locateCompilationCommand(
         source: String,
-        platform: String
-    ) -> CachedCommand? {
+        platform: String,
+        arch: String
+    ) -> Result<CachedCommand, ControlError> {
         if let workspace =
             BazelInterface.findWorkspaceRoot(
                 containing: source
@@ -950,15 +1280,62 @@ public final class BuildLogCompiler {
                 platformFilter: platform,
                 found: &found
             ) {
-                return CachedCommand(
-                    command: command,
-                    logPath:
-                        "bazel:" + workspace,
-                    workingDirectory: workspace
+                return .success(
+                    makeCachedCommand(
+                        command: command,
+                        logPath: "bazel:" + workspace,
+                        workingDirectory: workspace,
+                        platformHint: platform
+                    )
                 )
             }
         }
 
+        let candidates = buildLogCompilationCandidates(
+            source: source,
+            platform: platform
+        )
+
+        guard let selection = selectCompilationCommand(
+            from: candidates,
+            requestedArch: arch
+        ) else {
+            return .failure(
+                ControlError(
+                    code: "COMPILE_COMMAND_NOT_FOUND",
+                    message: """
+                    Could not find the original Xcode compile command for \(source). Build the app once with this source in the target. For Swift on modern Xcode, set EMIT_FRONTEND_COMMAND_LINES=YES in Debug.
+                    """
+                )
+            )
+        }
+
+        return selection
+    }
+
+    private func compilationCandidates(
+        source: String,
+        platform: String
+    ) -> [CachedCommand] {
+        var candidates = cachedCompilationCandidates(
+            source: source,
+            platform: platform
+        )
+        candidates.append(
+            contentsOf: buildLogCompilationCandidates(
+                source: source,
+                platform: platform
+            )
+        )
+        return deduplicatedCompilationCandidates(
+            candidates
+        )
+    }
+
+    private func buildLogCompilationCandidates(
+        source: String,
+        platform: String
+    ) -> [CachedCommand] {
         let escapedSource = shellEscapePath(source)
         let sourceForms = [
             source,
@@ -968,6 +1345,7 @@ public final class BuildLogCompiler {
         ]
         let basename = URL(fileURLWithPath: source).lastPathComponent
         let isSwift = source.hasSuffix(".swift")
+        var candidates: [CachedCommand] = []
 
         for logURL in buildLogsNewestFirst().prefix(80) {
             let result = Shell.run(
@@ -1013,16 +1391,136 @@ public final class BuildLogCompiler {
                     from: line,
                     swift: isSwift
                 ) {
-                    return CachedCommand(
-                        command: command,
-                        logPath: logURL.path,
-                        workingDirectory: projectRoot
+                    candidates.append(
+                        makeCachedCommand(
+                            command: command,
+                            logPath: logURL.path,
+                            workingDirectory: projectRoot,
+                            platformHint: platform
+                        )
                     )
                 }
             }
         }
 
-        return nil
+        return deduplicatedCompilationCandidates(
+            candidates
+        )
+    }
+
+    private func makeCachedCommand(
+        command: String,
+        logPath: String,
+        workingDirectory: String?,
+        platformHint: String
+    ) -> CachedCommand {
+        let detectedPlatform = interceptedPlatform(
+            from: command
+        )
+        return CachedCommand(
+            command: command,
+            logPath: logPath,
+            workingDirectory: workingDirectory,
+            platform: detectedPlatform.isEmpty
+                ? platformHint
+                : detectedPlatform,
+            arch: commandArchitecture(from: command),
+            module: commandModule(from: command),
+            targetTriple: commandTargetTriple(from: command),
+            debugConfiguration: isDebugCommand(command)
+        )
+    }
+
+    private func selectCompilationCommand(
+        from candidates: [CachedCommand],
+        requestedArch: String
+    ) -> Result<CachedCommand, ControlError>? {
+        guard !candidates.isEmpty else {
+            return nil
+        }
+
+        var eligible = candidates
+        if !requestedArch.isEmpty {
+            let matching = eligible.filter {
+                $0.arch == requestedArch
+            }
+            if !matching.isEmpty {
+                eligible = matching
+            } else {
+                let unknown = eligible.filter {
+                    ($0.arch ?? "").isEmpty
+                }
+                if !unknown.isEmpty {
+                    eligible = unknown
+                } else {
+                    let available = Array(
+                        Set(eligible.compactMap { $0.arch })
+                    ).sorted()
+                    return .failure(
+                        ControlError(
+                            code: "COMPILE_ARCH_MISMATCH",
+                            message: "No compile command for architecture \(requestedArch). Available architectures: \(available.joined(separator: ", "))."
+                        )
+                    )
+                }
+            }
+        }
+
+        let debug = eligible.filter {
+            $0.debugConfiguration == true
+        }
+        if !debug.isEmpty {
+            eligible = debug
+        }
+
+        eligible = deduplicatedCompilationCandidates(
+            eligible
+        )
+
+        guard eligible.count == 1 else {
+            let modules = Array(
+                Set(eligible.compactMap { $0.module })
+            ).sorted()
+            let triples = Array(
+                Set(eligible.compactMap { $0.targetTriple })
+            ).sorted()
+            return .failure(
+                ControlError(
+                    code: "COMPILE_COMMAND_AMBIGUOUS",
+                    message: """
+                    Multiple compile contexts match this source. Modules: \(modules.isEmpty ? "unknown" : modules.joined(separator: ", ")); target triples: \(triples.isEmpty ? "unknown" : triples.joined(separator: ", ")). Build or select a single target context before injecting.
+                    """
+                )
+            )
+        }
+
+        return .success(eligible[0])
+    }
+
+    private func deduplicatedCompilationCandidates(
+        _ candidates: [CachedCommand]
+    ) -> [CachedCommand] {
+        var seen = Set<String>()
+        var output: [CachedCommand] = []
+
+        for candidate in candidates {
+            let identity = [
+                candidate.platform ?? "",
+                candidate.arch ?? "",
+                candidate.module ?? "",
+                candidate.targetTriple ?? "",
+                candidate.debugConfiguration == true
+                    ? "debug"
+                    : "other"
+            ].joined(separator: "|")
+
+            guard seen.insert(identity).inserted else {
+                continue
+            }
+            output.append(candidate)
+        }
+
+        return output
     }
 
     private func bazelParser(
@@ -1146,7 +1644,7 @@ public final class BuildLogCompiler {
             .map(\.0)
     }
 
-    private func extractCompilerCommand(
+    func extractCompilerCommand(
         from line: String,
         swift: Bool
     ) -> String? {
@@ -1205,7 +1703,19 @@ public final class BuildLogCompiler {
         var index = range.lowerBound
         while index > line.startIndex {
             let previous = line.index(before: index)
-            if line[previous].isWhitespace {
+            let character = line[previous]
+            let isControlBoundary = character.unicodeScalars.allSatisfy {
+                $0.value < 0x20 || $0.value == 0x7f
+            }
+
+            // .xcactivitylog is a structured/binary log. Compiler command
+            // strings can be immediately preceded by serialization bytes or
+            // a quote without any whitespace. Do not let that prefix become
+            // part of the executable token.
+            if character.isWhitespace ||
+               character == "\"" ||
+               character == "'" ||
+               isControlBoundary {
                 break
             }
             index = previous
@@ -1270,11 +1780,24 @@ public final class BuildLogCompiler {
             )
         }
 
-        command = replacingRegex(
-            " -primary-file \(quotedArgumentRegex)",
-            in: command,
-            with: " "
-        )
+        if command.contains(" -filelist ") {
+            // The file list already provides all secondary sources, so remove
+            // the other primary-file argument pairs entirely.
+            command = replacingRegex(
+                " -primary-file \(quotedArgumentRegex)",
+                in: command,
+                with: " "
+            )
+        } else {
+            // In Xcode batch mode there may be many -primary-file arguments.
+            // Only the requested source stays primary; demote the others to
+            // normal secondary sources so their declarations remain visible
+            // during type checking.
+            command = command.replacingOccurrences(
+                of: " -primary-file ",
+                with: " "
+            )
+        }
 
         command = command.replacingOccurrences(
             of: "-agent-primary",
@@ -1410,12 +1933,62 @@ public final class BuildLogCompiler {
         ]
     }
 
-    private func cachedCommand(
-        for key: String
-    ) -> CachedCommand? {
+    private func cacheKey(
+        source: String,
+        platform: String,
+        command: CachedCommand
+    ) -> String {
+        [
+            source,
+            platform,
+            command.arch ?? "",
+            command.module ?? "",
+            command.targetTriple ?? "",
+            command.debugConfiguration == true
+                ? "debug"
+                : "other"
+        ].joined(separator: "|")
+    }
+
+    private func cachedCompilationCandidates(
+        source: String,
+        platform: String
+    ) -> [CachedCommand] {
         cacheLock.lock()
         defer { cacheLock.unlock() }
-        return memoryCache[key]
+
+        let legacyKey = source + "|" + platform
+        let prefix = legacyKey + "|"
+
+        return deduplicatedCompilationCandidates(
+            memoryCache.compactMap { key, command in
+                let matches: Bool
+                if platform.isEmpty {
+                    matches = key.hasPrefix(source + "|")
+                } else {
+                    matches = key == legacyKey ||
+                        key.hasPrefix(prefix)
+                }
+                guard matches else {
+                    return nil
+                }
+
+                if command.arch == nil ||
+                   command.targetTriple == nil ||
+                   (command.module == nil &&
+                    command.command.contains(" -module-name ")) {
+                    return makeCachedCommand(
+                        command: command.command,
+                        logPath: command.logPath,
+                        workingDirectory: command.workingDirectory,
+                        platformHint: command.platform ??
+                            platform
+                    )
+                }
+
+                return command
+            }
+        )
     }
 
     private func store(
@@ -1428,9 +2001,19 @@ public final class BuildLogCompiler {
         cacheLock.unlock()
     }
 
-    private func invalidate(_ key: String) {
+    private func invalidateCommands(
+        source: String,
+        platform: String
+    ) {
         cacheLock.lock()
-        memoryCache.removeValue(forKey: key)
+        let legacyKey = source + "|" + platform
+        let prefix = legacyKey + "|"
+        let keys = memoryCache.keys.filter {
+            $0 == legacyKey || $0.hasPrefix(prefix)
+        }
+        for key in keys {
+            memoryCache.removeValue(forKey: key)
+        }
         persistCacheLocked()
         cacheLock.unlock()
     }

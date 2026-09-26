@@ -41,8 +41,14 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "AgentInjectionHostShim",
+            path: "HostShim",
+            publicHeadersPath: "."
+        ),
+        .target(
             name: "AgentInjectionCore",
             dependencies: [
+                "AgentInjectionHostShim",
                 .product(
                     name: "InjectionImpl",
                     package: "InjectionLite"
@@ -64,11 +70,17 @@ let package = Package(
         ),
         .executableTarget(
             name: "injectiond",
-            dependencies: ["AgentInjectionCore"]
+            dependencies: [
+                "AgentInjectionCore",
+                "AgentInjectionHostShim"
+            ]
         ),
         .executableTarget(
             name: "injectionctl",
-            dependencies: ["AgentInjectionCore"]
+            dependencies: [
+                "AgentInjectionCore",
+                "AgentInjectionHostShim"
+            ]
         ),
         .executableTarget(
             name: "AgentInjectionMenu",

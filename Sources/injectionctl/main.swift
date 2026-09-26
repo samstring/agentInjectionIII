@@ -1,6 +1,11 @@
 import Foundation
 import Darwin
 import AgentInjectionCore
+import AgentInjectionHostShim
+
+// Force-link the host-only InjectionNext sentinel so this short-lived CLI
+// never starts InjectionLite's standalone source watcher.
+AgentInjectionLinkHostShim()
 
 struct CLIOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"

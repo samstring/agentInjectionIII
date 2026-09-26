@@ -49,7 +49,7 @@ public final class CompilerInterceptionManager {
                 ? "intercepted+build-log-fallback"
                 : "build-log",
             note: intercepted
-                ? "swift-frontend is patched; captured commands: \(compiler.interceptedCommandCount()), log: \(compiler.interceptionLogPath())"
+                ? "Swift compiler tools route through the driver-aware frontend wrapper; captured commands: \(compiler.interceptedCommandCount()), log: \(compiler.interceptionLogPath())"
                 : "Compiler interception is disabled."
         )
     }
@@ -107,7 +107,7 @@ public final class CompilerInterceptionManager {
                     )
                     try Self.rewireTools(
                         in: bin,
-                        destination: "swift-frontend.save"
+                        destination: "swift-frontend"
                     )
                 } catch {
                     try? fileManager.removeItem(
@@ -220,17 +220,23 @@ public final class CompilerInterceptionManager {
             logPath
         )
 
-        // Keep this deliberately small. The real compiler remains next to the
-        // script as swift-frontend.save, exactly like InjectionNext.
+        // Xcode 26.3+ may enter the Swift driver through swiftc instead of
+        // invoking swift-frontend directly. All Swift tool symlinks therefore
+        // point at this wrapper while interception is enabled. Preserve the
+        // original tool basename in argv[0] so the saved Swift multi-call
+        // binary still behaves as swiftc/swift/swift-frontend as appropriate.
         let script = """
-        #!/bin/zsh
+        #!/bin/bash
         set +e
+        tool="$(basename "$0")"
+        bin="$(cd "$(dirname "$0")" && pwd)"
+        real="$bin/swift-frontend.save"
         {
           printf '%q\\t' "$PWD"
-          printf '%q ' "$0.save" "$@"
+          printf '%q ' "$real" "$@"
           printf '\\n'
         } >> \(quotedLog)
-        exec "$0.save" "$@"
+        exec -a "$tool" "$real" "$@"
         """
 
         try script.write(

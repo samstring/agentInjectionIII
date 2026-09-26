@@ -60,3 +60,15 @@ public final class AgentInjectionRuntimeBridge: NSObject {
         lifetimeActive
     }
 }
+
+/// Linker root used by install-runtime.sh. The runtime looks up
+/// AgentInjectionRuntimeBridge dynamically with NSClassFromString(), so without
+/// a hard linker root the class can be removed by -dead_strip even though its
+/// Swift source was compiled.
+@_cdecl("AgentInjectionRuntimeBridgeAnchor")
+public func AgentInjectionRuntimeBridgeAnchor() -> UnsafeRawPointer {
+    unsafeBitCast(
+        AgentInjectionRuntimeBridge.self,
+        to: UnsafeRawPointer.self
+    )
+}

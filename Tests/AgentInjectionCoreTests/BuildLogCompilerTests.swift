@@ -2,7 +2,7 @@ import XCTest
 @testable import AgentInjectionCore
 
 final class BuildLogCompilerTests: XCTestCase {
-    func testSwiftRewriteKeepsOnlyRequestedPrimaryFile() {
+    func testSwiftRewriteKeepsOnlyRequestedPrimaryMarker() {
         let compiler = BuildLogCompiler()
         let source = "/repo/Sources/Foo.swift"
         let other = "/repo/Sources/Bar.swift"
@@ -26,7 +26,8 @@ final class BuildLogCompilerTests: XCTestCase {
         )
 
         XCTAssertTrue(rewritten.contains(" -primary-file \(source)"))
-        XCTAssertFalse(rewritten.contains(other))
+        XCTAssertTrue(rewritten.contains(" \(other)"))
+        XCTAssertFalse(rewritten.contains(" -primary-file \(other)"))
         XCTAssertFalse(rewritten.contains(output))
         XCTAssertTrue(rewritten.contains(" -o '/tmp/new.o'"))
         XCTAssertTrue(rewritten.contains(" -DDEBUG -DINJECTING"))
@@ -52,7 +53,14 @@ final class BuildLogCompilerTests: XCTestCase {
             rewritten.contains("-primary-file \"\(source)\""),
             rewritten
         )
-        XCTAssertFalse(rewritten.contains(other), rewritten)
+        XCTAssertTrue(
+            rewritten.contains("\"\(other)\""),
+            rewritten
+        )
+        XCTAssertFalse(
+            rewritten.contains("-primary-file \"\(other)\""),
+            rewritten
+        )
         XCTAssertFalse(rewritten.contains("old output.o"), rewritten)
         XCTAssertTrue(
             rewritten.contains("-o '/tmp/new output.o'"),
@@ -259,6 +267,450 @@ final class BuildLogCompilerTests: XCTestCase {
                 for: source.path
             ),
             "bazel"
+        )
+    }
+
+
+    func testDiagnosticsSelectsRuntimeArchitectureAcrossMultipleCommands() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-context-arch-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+
+        let source = root.appendingPathComponent("Feature.swift")
+        try "struct Feature {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let log = root.appendingPathComponent(
+            "frontend-commands.log"
+        )
+        let sdk =
+            "/Applications/Xcode.app/Contents/Developer/Platforms/" +
+            "iPhoneSimulator.platform/Developer/SDKs/" +
+            "iPhoneSimulator26.0.sdk"
+
+        let commands = [
+            "x86_64-apple-ios18.0-simulator",
+            "arm64-apple-ios18.0-simulator"
+        ].map { triple in
+            root.path + "\t" + [
+                "/Applications/Xcode.app/Contents/Developer/" +
+                    "Toolchains/XcodeDefault.xctoolchain/usr/bin/" +
+                    "swift-frontend.save",
+                "-frontend",
+                "-c",
+                "-primary-file", source.path,
+                "-target", triple,
+                "-sdk", sdk,
+                "-module-name", "FeatureModule",
+                "-D", "DEBUG"
+            ].joined(separator: " ")
+        }.joined(separator: "\n") + "\n"
+
+        try commands.write(
+            to: log,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path,
+            interceptionLogPath: log.path
+        )
+
+        let diagnostics = compiler.diagnostics(
+            source: source.path,
+            platform: "iPhoneSimulator",
+            arch: "arm64"
+        )
+
+        XCTAssertEqual(
+            diagnostics.compileCommandFound,
+            true
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandCandidateCount,
+            2
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandArchitectures,
+            ["arm64", "x86_64"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandModules,
+            ["FeatureModule"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandAmbiguous,
+            false
+        )
+    }
+
+    func testDiagnosticsRejectsAmbiguousModulesForSameSwiftSource() throws {
+        let root = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-context-module-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+
+        let source = root.appendingPathComponent("Shared.swift")
+        try "struct Shared {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let log = root.appendingPathComponent(
+            "frontend-commands.log"
+        )
+        let sdk =
+            "/Applications/Xcode.app/Contents/Developer/Platforms/" +
+            "iPhoneSimulator.platform/Developer/SDKs/" +
+            "iPhoneSimulator26.0.sdk"
+
+        let commands = [
+            "FeatureA",
+            "FeatureB"
+        ].map { module in
+            root.path + "\t" + [
+                "/Applications/Xcode.app/Contents/Developer/" +
+                    "Toolchains/XcodeDefault.xctoolchain/usr/bin/" +
+                    "swift-frontend.save",
+                "-frontend",
+                "-c",
+                "-primary-file", source.path,
+                "-target", "arm64-apple-ios18.0-simulator",
+                "-sdk", sdk,
+                "-module-name", module,
+                "-D", "DEBUG"
+            ].joined(separator: " ")
+        }.joined(separator: "\n") + "\n"
+
+        try commands.write(
+            to: log,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            cacheRoot: root
+                .appendingPathComponent("cache")
+                .path,
+            interceptionLogPath: log.path
+        )
+
+        let diagnostics = compiler.diagnostics(
+            source: source.path,
+            platform: "iPhoneSimulator",
+            arch: "arm64"
+        )
+
+        XCTAssertEqual(
+            diagnostics.compileCommandFound,
+            false
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandCandidateCount,
+            2
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandModules,
+            ["FeatureA", "FeatureB"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandArchitectures,
+            ["arm64"]
+        )
+        XCTAssertEqual(
+            diagnostics.compileCommandAmbiguous,
+            true
+        )
+    }
+
+
+    func testCachedCompileFailureRetriesOnlyOnce() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-cache-retry-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let derived = root.appendingPathComponent("DerivedData")
+        try FileManager.default.createDirectory(
+            at: derived,
+            withIntermediateDirectories: true
+        )
+
+        let source = root.appendingPathComponent("Feature.swift")
+        try "struct Feature {}\n".write(
+            to: source,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let interceptionLog = root.appendingPathComponent(
+            "frontend-commands.log"
+        )
+        let command = [
+            "/usr/bin/false",
+            "swift-frontend",
+            "-frontend",
+            "-c",
+            "-primary-file", source.path,
+            "-target", "arm64-apple-ios18.0-simulator",
+            "-module-name", "FeatureModule",
+            "-D", "DEBUG"
+        ].joined(separator: " ")
+        try (root.path + "\t" + command + "\n").write(
+            to: interceptionLog,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler(
+            projectRoot: root.path,
+            derivedDataRoot: derived.path,
+            cacheRoot: root.appendingPathComponent("cache").path,
+            interceptionLogPath: interceptionLog.path
+        )
+
+        let start = Date()
+        let result = compiler.compileAndLink(
+            source: source.path,
+            platform: "iPhoneSimulator",
+            arch: "arm64"
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        switch result {
+        case .success:
+            XCTFail("Expected compile failure")
+        case .failure(let error):
+            XCTAssertEqual(
+                error.code,
+                "COMPILE_FAILED"
+            )
+            XCTAssertTrue(
+                error.message.contains("/usr/bin/false"),
+                error.message
+            )
+        }
+
+        XCTAssertLessThan(
+            elapsed,
+            5,
+            "Cached compile retry should be bounded and must not recurse indefinitely."
+        )
+    }
+
+
+    func testExtractCompilerCommandDropsActivityLogBinaryPrefix() {
+        let compiler = BuildLogCompiler()
+        let line =
+            #"36"E0157793-A8F7-4E97-B0F9-DB3C3B287B71-66"0262356(20738"/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c -primary-file /tmp/SmokeFeature.swift -target arm64-apple-ios16.0-simulator"#
+
+        let command = compiler.extractCompilerCommand(
+            from: line,
+            swift: true
+        )
+
+        XCTAssertNotNil(command)
+        XCTAssertTrue(
+            command?.hasPrefix(
+                "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend"
+            ) == true,
+            command ?? "nil"
+        )
+        XCTAssertFalse(
+            command?.contains("E0157793") == true,
+            command ?? "nil"
+        )
+    }
+
+
+    func testSwiftRewriteDropsOtherPrimaryPathsWhenFilelistProvidesSources() {
+        let compiler = BuildLogCompiler()
+        let source = "/repo/Sources/Foo.swift"
+        let other = "/repo/Sources/Bar.swift"
+
+        let original = [
+            "/usr/bin/swift-frontend",
+            "-frontend",
+            "-c",
+            "-primary-file", source,
+            "-primary-file", other,
+            "-filelist", "/tmp/sources.txt",
+            "-target", "arm64-apple-ios18.0-simulator"
+        ].joined(separator: " ")
+
+        let rewritten = compiler.makeSingleFileCommand(
+            original: original,
+            source: source,
+            object: "/tmp/new.o"
+        )
+
+        XCTAssertTrue(rewritten.contains(" -primary-file \(source)"))
+        XCTAssertFalse(rewritten.contains(" -primary-file \(other)"))
+        XCTAssertFalse(rewritten.contains(" \(other)"))
+        XCTAssertTrue(rewritten.contains(" -filelist /tmp/sources.txt"))
+    }
+
+
+    func testMissingProductHeaderVFSOverlayIsRemoved() {
+        let compiler = BuildLogCompiler()
+        let missing =
+            "/tmp/SmokeFeature-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-VFS-iphonesimulator/all-product-headers.yaml"
+        let command = [
+            "/usr/bin/swift-frontend",
+            "-frontend",
+            "-c",
+            "/tmp/Foo.swift",
+            "-Xcc", "-ivfsoverlay",
+            "-Xcc", missing,
+            "-target", "arm64-apple-ios18.0-simulator"
+        ].joined(separator: " ")
+
+        let rewritten = compiler.rewriteMissingVFSOverlays(
+            in: command
+        )
+
+        XCTAssertFalse(
+            rewritten.contains(missing),
+            rewritten
+        )
+        XCTAssertFalse(
+            rewritten.contains("-ivfsoverlay"),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains(
+                "-target arm64-apple-ios18.0-simulator"
+            ),
+            rewritten
+        )
+    }
+
+    func testExistingVFSOverlayIsPreserved() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-vfs-existing-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        let overlay = root.appendingPathComponent(
+            "all-product-headers.yaml"
+        )
+        try "{}\n".write(
+            to: overlay,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let compiler = BuildLogCompiler()
+        let command =
+            "/usr/bin/swift-frontend -frontend -c /tmp/Foo.swift -Xcc -ivfsoverlay -Xcc \(overlay.path)"
+
+        let rewritten = compiler.rewriteMissingVFSOverlays(
+            in: command
+        )
+
+        XCTAssertTrue(
+            rewritten.contains(overlay.path),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains("-ivfsoverlay"),
+            rewritten
+        )
+    }
+
+    func testMissingVFSOverlayRecoversSiblingForSameTarget() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "agentInjectionIII-vfs-recovery-\(UUID().uuidString)"
+            )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let config = root
+            .appendingPathComponent("SmokeFeature.build")
+            .appendingPathComponent("Debug-iphonesimulator")
+        let stale = config.appendingPathComponent(
+            "SmokeFeature-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-VFS-iphonesimulator"
+        )
+        let current = config.appendingPathComponent(
+            "SmokeFeature-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-VFS-iphonesimulator"
+        )
+        try FileManager.default.createDirectory(
+            at: current,
+            withIntermediateDirectories: true
+        )
+
+        let recovered = current.appendingPathComponent(
+            "all-product-headers.yaml"
+        )
+        try "{}\n".write(
+            to: recovered,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let missing = stale.appendingPathComponent(
+            "all-product-headers.yaml"
+        ).path
+
+        let compiler = BuildLogCompiler()
+        let command =
+            "/usr/bin/swift-frontend -frontend -c /tmp/Foo.swift -Xcc -ivfsoverlay -Xcc \(missing)"
+
+        let rewritten = compiler.rewriteMissingVFSOverlays(
+            in: command
+        )
+
+        XCTAssertFalse(
+            rewritten.contains(missing),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains(recovered.path),
+            rewritten
+        )
+        XCTAssertTrue(
+            rewritten.contains("-ivfsoverlay"),
+            rewritten
         )
     }
 

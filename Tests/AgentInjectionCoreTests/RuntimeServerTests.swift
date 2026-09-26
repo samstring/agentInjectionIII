@@ -57,6 +57,12 @@ final class RuntimeServerTests: XCTestCase {
                         atPath: copiedDylib
                     )
                 )
+                XCTAssertTrue(
+                    URL(fileURLWithPath: copiedDylib)
+                        .lastPathComponent
+                        .hasPrefix("eval_injection_"),
+                    copiedDylib
+                )
 
                 try Self.writeInt(1, fd: fd)
             } catch {
