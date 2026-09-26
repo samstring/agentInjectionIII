@@ -939,7 +939,7 @@ static BOOL AgentTraceOutputInstalled = NO;
     }
 
     if ([action isEqualToString:@"call_order"]) {
-        dispatch_async(AgentTraceLifetimeQueue, ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
             Class bridge =
                 NSClassFromString(@"AgentInjectionRuntimeBridge");
             SEL selector =
