@@ -80,7 +80,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] env NAME [VALUE]
       injectionctl [--socket PATH] profile [LIMIT]
       injectionctl [--socket PATH] call-order
-      injectionctl [--socket PATH] instances start
+      injectionctl [--socket PATH] instances start [FILTER]
       injectionctl [--socket PATH] instances read
       injectionctl [--socket PATH] instances stop
       injectionctl [--socket PATH] tests read [LIMIT]
@@ -551,20 +551,31 @@ case "call-order":
     )
 
 case "instances":
-    guard options.arguments.count == 2 else {
-        fatalUsage("instances requires start, read, or stop.")
+    guard options.arguments.count >= 2 &&
+          options.arguments.count <= 3 else {
+        fatalUsage("instances requires start [FILTER], read, or stop.")
     }
 
     switch options.arguments[1] {
     case "start":
         request = ControlRequest(
-            action: .instancesStart
+            action: .instancesStart,
+            filter:
+                options.arguments.count == 3
+                ? options.arguments[2]
+                : nil
         )
     case "read":
+        guard options.arguments.count == 2 else {
+            fatalUsage("instances read does not accept arguments.")
+        }
         request = ControlRequest(
             action: .instancesRead
         )
     case "stop":
+        guard options.arguments.count == 2 else {
+            fatalUsage("instances stop does not accept arguments.")
+        }
         request = ControlRequest(
             action: .instancesStop
         )
