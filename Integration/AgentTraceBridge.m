@@ -970,11 +970,20 @@ static BOOL AgentTraceOutputInstalled = NO;
     }
 
     if ([action isEqualToString:@"instances_start"]) {
+        NSString *filter =
+            [command[@"filter"] isKindOfClass:NSString.class]
+            ? command[@"filter"]
+            : nil;
+
         dispatch_async(AgentTraceLifetimeQueue, ^{
             Class bridge =
                 NSClassFromString(@"AgentInjectionRuntimeBridge");
             SEL selector =
                 NSSelectorFromString(@"startLifetimeTracking");
+            SEL filteredSelector =
+                NSSelectorFromString(
+                    @"startLifetimeTrackingWithFilter:"
+                );
 
             if (!bridge ||
                 ![bridge respondsToSelector:selector]) {
@@ -983,11 +992,25 @@ static BOOL AgentTraceOutputInstalled = NO;
                 return;
             }
 
-            typedef NSInteger (*IntegerSend)(id, SEL);
-            ((IntegerSend)objc_msgSend)(
-                bridge,
-                selector
-            );
+            if (filter.length > 0 &&
+                [bridge respondsToSelector:filteredSelector]) {
+                typedef NSInteger (*FilteredIntegerSend)(
+                    id,
+                    SEL,
+                    id
+                );
+                ((FilteredIntegerSend)objc_msgSend)(
+                    bridge,
+                    filteredSelector,
+                    filter
+                );
+            } else {
+                typedef NSInteger (*IntegerSend)(id, SEL);
+                ((IntegerSend)objc_msgSend)(
+                    bridge,
+                    selector
+                );
+            }
 
             [self sendTraceState:@"instances_started"
                            error:nil];
