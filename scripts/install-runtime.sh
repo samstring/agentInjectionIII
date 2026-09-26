@@ -59,6 +59,67 @@ PY
 cp "$REPO_ROOT/Runtime/AgentInjectionRuntimeBridge.swift" \
    "$SRC/Sources/InjectionNext/AgentInjectionRuntimeBridge.swift"
 
+# InjectionNext.xcodeproj uses explicit PBX file/build references rather than a
+# synchronized folder group. Copying a new Swift source into Sources/ is not
+# enough to compile it into InjectionBundle, so add the Agent bridge to the
+# project and target sources phase deterministically.
+PROJECT_FILE="$SRC/App/InjectionNext.xcodeproj/project.pbxproj"
+python3 - "$PROJECT_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+
+build_id = "A61E50012F00000100A61E50"
+file_id = "A61E50022F00000100A61E50"
+name = "AgentInjectionRuntimeBridge.swift"
+
+if f"{name} in Sources" in text:
+    raise SystemExit(0)
+
+replacements = [
+    (
+        "/* Begin PBXBuildFile section */\n",
+        "/* Begin PBXBuildFile section */\n"
+        f"\t\t{build_id} /* {name} in Sources */ = "
+        f"{{isa = PBXBuildFile; fileRef = {file_id} /* {name} */; }};\n",
+    ),
+    (
+        "/* Begin PBXFileReference section */\n",
+        "/* Begin PBXFileReference section */\n"
+        f"\t\t{file_id} /* {name} */ = "
+        "{isa = PBXFileReference; fileEncoding = 4; "
+        "lastKnownFileType = sourcecode.swift; "
+        f"name = {name}; "
+        f"path = ../../Sources/InjectionNext/{name}; "
+        'sourceTree = "<group>"; };\n',
+    ),
+    (
+        "\t\t\t\tBBDD84182C4FE7E6000F3124 /* InjectionNext.swift */,\n"
+        "\t\t\t\tBBDD84532C4FEB16000F3124 /* TupleRegex.swift */,",
+        "\t\t\t\tBBDD84182C4FE7E6000F3124 /* InjectionNext.swift */,\n"
+        f"\t\t\t\t{file_id} /* {name} */,\n"
+        "\t\t\t\tBBDD84532C4FEB16000F3124 /* TupleRegex.swift */,",
+    ),
+    (
+        "\t\t\t\tBBDD84422C4FEA4E000F3124 /* InjectionNext.swift in Sources */,\n",
+        "\t\t\t\tBBDD84422C4FEA4E000F3124 /* InjectionNext.swift in Sources */,\n"
+        f"\t\t\t\t{build_id} /* {name} in Sources */,\n",
+    ),
+]
+
+for needle, replacement in replacements:
+    if needle not in text:
+        raise SystemExit(
+            f"Unable to add {name} to InjectionBundle; "
+            f"upstream project structure changed near: {needle!r}"
+        )
+    text = text.replace(needle, replacement, 1)
+
+path.write_text(text)
+PY
+
 rm -rf "$BUILD"
 
 build_runtime() {
@@ -97,6 +158,13 @@ build_runtime() {
   local source_bundle="$BUILD/Debug-$sdk/${family}Injection.bundle"
   if [ ! -d "$source_bundle" ]; then
     echo "error: expected runtime bundle not found at $source_bundle" >&2
+    exit 1
+  fi
+
+  local runtime_binary="$source_bundle/${family}Injection"
+  if ! /usr/bin/nm -gjU "$runtime_binary" 2>/dev/null |
+       grep -q 'AgentInjectionRuntimeBridge'; then
+    echo "error: AgentInjectionRuntimeBridge was not compiled into $runtime_binary" >&2
     exit 1
   fi
 
