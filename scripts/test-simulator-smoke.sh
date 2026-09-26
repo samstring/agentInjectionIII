@@ -228,23 +228,53 @@ ensure_cocoapods
 cd "$SMOKE_DIR"
 ruby generate_project.rb
 
-echo "==> Build separate Swift feature project"
-set +e
-xcodebuild \
-  -project "$SMOKE_DIR/FeatureProject/SmokeFeature.xcodeproj" \
-  -scheme SmokeFeature \
-  -configuration Debug \
-  -sdk iphonesimulator \
-  -destination "platform=iOS Simulator,id=$UDID" \
-  -derivedDataPath "$DERIVED" \
-  build 2>&1 | tee "$FEATURE_BUILD_LOG"
-FEATURE_XCODE_STATUS=${PIPESTATUS[0]}
-set -e
+FEATURE_PROJECTS_ROOT="$SMOKE_DIR/FeatureProjects"
+FEATURE_SOURCES=()
+FEATURE_MODULES=()
+FEATURE_DIRS=()
+FEATURE_BUILD_LOGS=()
+FEATURE_FRAMEWORKS=()
 
-if [ "$FEATURE_XCODE_STATUS" != "0" ]; then
-  echo "Smoke feature project build failed." >&2
-  exit "$FEATURE_XCODE_STATUS"
-fi
+echo "==> Build $FEATURE_PROJECT_COUNT independent mixed Swift/ObjC feature projects"
+for index in $(seq 1 "$FEATURE_PROJECT_COUNT"); do
+  suffix="$(printf '%02d' "$index")"
+  module="SmokeFeature$suffix"
+  feature_dir="$FEATURE_PROJECTS_ROOT/Feature$suffix"
+  feature_source="$feature_dir/Sources/$module.swift"
+  feature_project="$feature_dir/$module.xcodeproj"
+  feature_build_log="$ARTIFACTS/feature-$suffix-xcodebuild.log"
+
+  if [ ! -f "$feature_source" ] || [ ! -d "$feature_project" ]; then
+    echo "Generated feature project is incomplete: $feature_dir" >&2
+    exit 1
+  fi
+
+  FEATURE_SOURCES+=("$feature_source")
+  FEATURE_MODULES+=("$module")
+  FEATURE_DIRS+=("$feature_dir")
+  FEATURE_BUILD_LOGS+=("$feature_build_log")
+  FEATURE_FRAMEWORKS+=(
+    "$DERIVED/Build/Products/Debug-iphonesimulator/$module.framework"
+  )
+
+  echo "    -> $module"
+  set +e
+  xcodebuild \
+    -project "$feature_project" \
+    -scheme "$module" \
+    -configuration Debug \
+    -sdk iphonesimulator \
+    -destination "platform=iOS Simulator,id=$UDID" \
+    -derivedDataPath "$DERIVED" \
+    build 2>&1 | tee "$feature_build_log"
+  FEATURE_XCODE_STATUS=${PIPESTATUS[0]}
+  set -e
+
+  if [ "$FEATURE_XCODE_STATUS" != "0" ]; then
+    echo "$module build failed." >&2
+    exit "$FEATURE_XCODE_STATUS"
+  fi
+done
 
 echo "==> Install CocoaPods"
 export COCOAPODS_DISABLE_STATS=true
