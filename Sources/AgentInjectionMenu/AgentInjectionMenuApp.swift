@@ -1636,24 +1636,29 @@ private struct StatusMenuView: View {
     var body: some View {
         VStack(
             alignment: .leading,
-            spacing: 10
+            spacing: 6
         ) {
             HStack(spacing: 7) {
                 Circle()
                     .fill(model.statusLightColor)
-                    .frame(width: 10, height: 10)
+                    .frame(width: 9, height: 9)
                     .help(
-                        "Injection state: \(model.statusLightText)"
+                        MenuL10n.stateHelpPrefix +
+                        model.statusLightText
                     )
+
                 Text("AgentInjectionIII")
                     .font(.headline)
+
                 Text(model.statusLightText)
                     .font(.caption)
                     .bold()
                     .foregroundStyle(
                         model.statusLightColor
                     )
+
                 Spacer()
+
                 Button {
                     model.refreshStatus()
                     model.refreshDiagnostics()
@@ -1674,7 +1679,7 @@ private struct StatusMenuView: View {
                 Divider()
 
                 Button(
-                    "Inject All Changed Files"
+                    MenuL10n.injectAll
                 ) {
                     model.injectPendingChanges()
                 }
@@ -1684,7 +1689,7 @@ private struct StatusMenuView: View {
                 )
 
                 Text(
-                    "Control + - routes every pending source to its owning project and all matching runtime devices."
+                    MenuL10n.hotKeyDescription
                 )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -1702,94 +1707,19 @@ private struct StatusMenuView: View {
             if let error =
                 model.connectionError {
                 Divider()
+
                 Label(
-                    "injectiond is starting or unavailable",
+                    MenuL10n.daemonUnavailable,
                     systemImage:
                         "exclamationmark.triangle"
                 )
+                .font(.caption)
                 .foregroundStyle(.secondary)
 
                 Text(error)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-            } else if let diagnostics =
-                        model.diagnostics {
-                Divider()
-
-                statusSection(diagnostics)
-
-                HStack {
-                    Label(
-                        diagnostics.trace.connected
-                            ? "Trace bridge connected"
-                            : "Trace bridge disconnected",
-                        systemImage:
-                            diagnostics.trace.connected
-                            ? "waveform.path"
-                            : "waveform.path.badge.minus"
-                    )
-                    Spacer()
-                    if diagnostics.trace.active {
-                        Text("ACTIVE")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if let error =
-                    diagnostics.lastError.error {
-                    Divider()
-                    Label(
-                        error.code,
-                        systemImage:
-                            "exclamationmark.triangle.fill"
-                    )
-                    .font(.subheadline)
-
-                    Text(error.message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-
-                let noteworthy =
-                    diagnostics.logs.entries
-                        .filter {
-                            $0.level != "info"
-                        }
-                        .suffix(4)
-
-                if !noteworthy.isEmpty {
-                    Divider()
-                    Text("Recent diagnostics")
-                        .font(.subheadline)
-                        .bold()
-
-                    ForEach(
-                        Array(
-                            noteworthy.enumerated()
-                        ),
-                        id: \.offset
-                    ) { _, entry in
-                        VStack(
-                            alignment: .leading,
-                            spacing: 2
-                        ) {
-                            Text(
-                                entry.level
-                                    .uppercased()
-                            )
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-
-                            Text(entry.message)
-                                .font(.caption)
-                                .lineLimit(3)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
             }
 
             Divider()
@@ -1798,10 +1728,11 @@ private struct StatusMenuView: View {
                 if let updated =
                     model.lastUpdated {
                     Text(
-                        "Updated " +
-                        updated.formatted(
-                            date: .omitted,
-                            time: .standard
+                        MenuL10n.updated(
+                            updated.formatted(
+                                date: .omitted,
+                                time: .standard
+                            )
                         )
                     )
                     .font(.caption2)
@@ -1811,7 +1742,7 @@ private struct StatusMenuView: View {
                 Spacer()
 
                 Button(
-                    "Quit AgentInjectionIII"
+                    MenuL10n.quit
                 ) {
                     model.shutdown()
                     NSApplication.shared
@@ -1819,15 +1750,17 @@ private struct StatusMenuView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
     private var projectsSection: some View {
         HStack {
-            Text("Projects")
+            Text(MenuL10n.projects)
                 .font(.subheadline)
                 .bold()
+
             Spacer()
 
             if let projects = model.projects {
@@ -1844,20 +1777,18 @@ private struct StatusMenuView: View {
                 Image(systemName: "plus")
             }
             .buttonStyle(.borderless)
-            .help("Add independent project directory")
+            .help(MenuL10n.addProjectHelp)
         }
 
         let projects =
             model.projects?.projects ?? []
 
         if projects.isEmpty {
-            Text(
-                "No project directories registered."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Text(MenuL10n.noProjects)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-            Button("Add Project…") {
+            Button(MenuL10n.addProject) {
                 model.chooseProject()
             }
         } else {
@@ -1874,10 +1805,10 @@ private struct StatusMenuView: View {
            !unmatched.isEmpty {
             VStack(
                 alignment: .leading,
-                spacing: 4
+                spacing: 3
             ) {
                 Label(
-                    "Unmatched Runtime Sessions",
+                    MenuL10n.unmatchedRuntimes,
                     systemImage:
                         "questionmark.circle"
                 )
@@ -1889,6 +1820,10 @@ private struct StatusMenuView: View {
                     id: \.id
                 ) { target in
                     runtimeRow(target)
+                        .padding(
+                            .leading,
+                            18
+                        )
                 }
             }
         }
@@ -1900,7 +1835,7 @@ private struct StatusMenuView: View {
     ) -> some View {
         VStack(
             alignment: .leading,
-            spacing: 5
+            spacing: 3
         ) {
             HStack(spacing: 6) {
                 Circle()
@@ -1911,14 +1846,16 @@ private struct StatusMenuView: View {
                     )
                     .frame(width: 8, height: 8)
                     .help(
-                        "Project state: " +
+                        MenuL10n.stateHelpPrefix +
                         model.projectStatusText(
                             project
                         )
                     )
+
                 Image(
                     systemName: "folder"
                 )
+
                 Text(project.displayName)
                     .font(.subheadline)
                     .bold()
@@ -1927,7 +1864,9 @@ private struct StatusMenuView: View {
 
                 if project.pendingCount > 0 {
                     Text(
-                        "\(project.pendingCount) changed"
+                        MenuL10n.changed(
+                            project.pendingCount
+                        )
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1940,11 +1879,15 @@ private struct StatusMenuView: View {
                     )
                 } label: {
                     Image(
-                        systemName: "minus.circle"
+                        systemName:
+                            "minus.circle"
                     )
                 }
                 .buttonStyle(.borderless)
-                .help("Remove project")
+                .help(
+                    MenuL10n
+                        .removeProjectHelp
+                )
             }
 
             Text(project.root)
@@ -1958,12 +1901,14 @@ private struct StatusMenuView: View {
 
             if targets.isEmpty {
                 Label(
-                    "No matching runtime",
+                    MenuL10n
+                        .noMatchingRuntime,
                     systemImage:
                         "iphone.slash"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .padding(.leading, 18)
             } else {
                 ForEach(
                     targets,
@@ -1972,18 +1917,21 @@ private struct StatusMenuView: View {
                     Toggle(
                         isOn: Binding(
                             get: {
-                                model.isTargetSelected(
-                                    target,
-                                    for: project.id
-                                )
+                                model
+                                    .isTargetSelected(
+                                        target,
+                                        for:
+                                            project.id
+                                    )
                             },
                             set: {
-                                model.setTargetSelected(
-                                    target,
-                                    projectID:
-                                        project.id,
-                                    selected: $0
-                                )
+                                model
+                                    .setTargetSelected(
+                                        target,
+                                        projectID:
+                                            project.id,
+                                        selected: $0
+                                    )
                             }
                         )
                     ) {
@@ -1992,13 +1940,20 @@ private struct StatusMenuView: View {
                     .toggleStyle(.checkbox)
                     .padding(.leading, 18)
                     .help(
-                        "Include this runtime in injections for \(project.displayName)."
+                        MenuL10n
+                            .includeRuntimeHelp(
+                                project:
+                                    project
+                                        .displayName
+                            )
                     )
                 }
             }
 
             if let pending =
-                model.pending(for: project.id),
+                model.pending(
+                    for: project.id
+                ),
                !pending.files.isEmpty {
                 ForEach(
                     Array(
@@ -2006,11 +1961,13 @@ private struct StatusMenuView: View {
                     ),
                     id: \.self
                 ) { file in
-                    HStack {
+                    HStack(spacing: 5) {
                         Image(
                             systemName: "doc"
                         )
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(
+                            .secondary
+                        )
 
                         Text(
                             URL(
@@ -2020,9 +1977,15 @@ private struct StatusMenuView: View {
                             .lastPathComponent
                         )
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(
+                            .secondary
+                        )
                         .lineLimit(1)
                     }
+                    .padding(
+                        .leading,
+                        18
+                    )
                 }
 
                 let selectedCount =
@@ -2036,19 +1999,32 @@ private struct StatusMenuView: View {
 
                 Button(
                     selectedCount > 1
-                        ? "Inject → \(selectedCount) Devices"
+                        ? MenuL10n
+                            .injectDevices(
+                                selectedCount
+                            )
                         : selectedCount == 1
-                            ? "Inject → Selected Device"
-                            : "No Device Selected"
+                            ? MenuL10n
+                                .selectedDevice
+                            : MenuL10n
+                                .noDeviceSelected
                 ) {
-                    model.injectPendingChanges(
-                        projectID: project.id
-                    )
+                    model
+                        .injectPendingChanges(
+                            projectID:
+                                project.id
+                        )
                 }
-                .disabled(selectedCount == 0)
+                .disabled(
+                    selectedCount == 0
+                )
+                .padding(
+                    .leading,
+                    18
+                )
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
@@ -2070,18 +2046,19 @@ private struct StatusMenuView: View {
 
             VStack(
                 alignment: .leading,
-                spacing: 1
+                spacing: 0
             ) {
                 Text(
                     target.executable
                         .map {
                             URL(
-                                fileURLWithPath: $0
+                                fileURLWithPath:
+                                    $0
                             )
                             .lastPathComponent
                         }
                     ?? target.platform
-                    ?? "Runtime"
+                    ?? MenuL10n.runtime
                 )
                 .font(.caption)
 
@@ -2092,7 +2069,9 @@ private struct StatusMenuView: View {
                         target.arch
                     ]
                     .compactMap { $0 }
-                    .joined(separator: " · ")
+                    .joined(
+                        separator: " · "
+                    )
                 )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -2111,6 +2090,7 @@ private struct StatusMenuView: View {
                         width: 7,
                         height: 7
                     )
+
                 Text(
                     model.targetStatusText(
                         target
@@ -2119,43 +2099,6 @@ private struct StatusMenuView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func statusSection(
-        _ diagnostics: DiagnosticsResult
-    ) -> some View {
-        HStack {
-            Text("Injection")
-            Spacer()
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(model.statusLightColor)
-                    .frame(width: 7, height: 7)
-                Text(model.statusLightText)
-            }
-            .foregroundStyle(.secondary)
-        }
-
-        HStack {
-            Text("Doctor")
-            Spacer()
-            Text(
-                diagnostics.doctor.ready
-                    ? "Pass"
-                    : "Needs attention"
-            )
-            .foregroundStyle(.secondary)
-        }
-
-        HStack {
-            Text("Connected runtimes")
-            Spacer()
-            Text(
-                "\(diagnostics.targets.targets.count)"
-            )
-            .foregroundStyle(.secondary)
         }
     }
 }
