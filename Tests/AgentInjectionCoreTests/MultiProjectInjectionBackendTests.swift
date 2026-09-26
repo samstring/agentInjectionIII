@@ -169,6 +169,7 @@ final class MultiProjectInjectionBackendTests:
 
         let request = ControlRequest(
             action: .pendingChanges,
+            targets: ["runtime-a", "runtime-b"],
             projectID: "project-123"
         )
         let data =
@@ -184,6 +185,67 @@ final class MultiProjectInjectionBackendTests:
         XCTAssertEqual(
             decoded.projectID,
             "project-123"
+        )
+        XCTAssertEqual(
+            decoded.targets,
+            ["runtime-a", "runtime-b"]
+        )
+    }
+
+    func testEmptyRuntimeSelectionDoesNotFallback()
+        throws {
+        let root =
+            FileManager.default
+                .temporaryDirectory
+                .appendingPathComponent(
+                    "AgentInjection-Selection-" +
+                    UUID().uuidString
+                )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(
+                at: root
+            )
+        }
+
+        let backend =
+            MultiProjectInjectionBackend(
+                runtimeServer:
+                    InjectionNextRuntimeServer(
+                        port: 19787
+                    ),
+                traceServer:
+                    AgentTraceServer(
+                        port: 19788
+                    ),
+                projectRoots: [root.path]
+            )
+
+        let projectID =
+            ProjectSessionIdentity.id(
+                forRoot: root.path
+            )
+        let source =
+            root.appendingPathComponent(
+                "View.swift"
+            ).path
+
+        let response = backend.inject(
+            files: [source],
+            projectID: projectID,
+            targets: []
+        )
+
+        XCTAssertEqual(
+            response.error?.code,
+            "NO_TARGETS_SELECTED"
+        )
+        XCTAssertFalse(
+            response.results.first?.injected
+                ?? true
         )
     }
 
