@@ -80,11 +80,15 @@ public final class DaemonSingletonLock:
             "pid=\(getpid())\n" +
             "started=\(ISO8601DateFormatter().string(from: Date()))\n"
         state.withCString {
-            Darwin.ftruncate(fd, 0)
-            Darwin.write(
+            pointer in
+            _ = Darwin.ftruncate(
                 fd,
-                $0,
-                strlen($0)
+                0
+            )
+            _ = Darwin.write(
+                fd,
+                pointer,
+                strlen(pointer)
             )
         }
         _ = Darwin.fsync(fd)
