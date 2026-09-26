@@ -23,10 +23,21 @@ public protocol ProjectRoutingBackend: InjectionBackend {
         target: String?
     ) -> BackendInjectionResponse
 
+    func injectPending(
+        projectID: String,
+        targets: [String]?
+    ) -> BackendInjectionResponse
+
     func inject(
         files: [String],
         projectID: String,
         target: String?
+    ) -> BackendInjectionResponse
+
+    func inject(
+        files: [String],
+        projectID: String,
+        targets: [String]?
     ) -> BackendInjectionResponse
 
     func doctor(
@@ -416,6 +427,103 @@ public final class MultiProjectInjectionBackend:
             if firstError == nil {
                 firstError = response.error
             }
+        }
+
+        return BackendInjectionResponse(
+            results: results,
+            error: firstError
+        )
+    }
+
+    public func injectPending(
+        projectID: String,
+        targets targetIDs: [String]?
+    ) -> BackendInjectionResponse {
+        guard let session = session(id: projectID) else {
+            return projectNotFoundInjection(projectID)
+        }
+
+        let pending = session.backend.pendingChanges()
+        guard !pending.files.isEmpty else {
+            return BackendInjectionResponse(
+                results: []
+            )
+        }
+
+        return inject(
+            files: pending.files,
+            projectID: projectID,
+            targets: targetIDs
+        )
+    }
+
+    public func inject(
+        files: [String],
+        projectID: String,
+        targets targetIDs: [String]?
+    ) -> BackendInjectionResponse {
+        guard let session = session(id: projectID) else {
+            return projectNotFoundInjection(projectID)
+        }
+
+        guard let targetIDs else {
+            return inject(
+                files: files,
+                projectID: projectID,
+                target: nil
+            )
+        }
+
+        guard !targetIDs.isEmpty else {
+            let error = ControlError(
+                code: "NO_TARGETS_SELECTED",
+                message: "No runtime devices are selected for project \(session.root)."
+            )
+            return BackendInjectionResponse(
+                results: files.map {
+                    InjectionResult(
+                        file: ProjectSessionIdentity.standardizedRoot($0),
+                        compiled: false,
+                        injected: false,
+                        message: error.message
+                    )
+                },
+                error: error
+            )
+        }
+
+        var uniqueTargets: [String] = []
+        var seen = Set<String>()
+        for targetID in targetIDs where seen.insert(targetID).inserted {
+            guard selectedTarget(
+                for: session,
+                explicit: targetID
+            ) != nil else {
+                return targetMismatchInjection(
+                    target: targetID,
+                    projectID: projectID
+                )
+            }
+            uniqueTargets.append(targetID)
+        }
+
+        var results: [InjectionResult] = []
+        var firstError: ControlError?
+
+        for targetID in uniqueTargets {
+            let response = session.backend.inject(
+                files: files,
+                target: targetID
+            )
+            results.append(contentsOf: response.results)
+            if firstError == nil {
+                firstError = response.error
+            }
+        }
+
+        if firstError != nil ||
+           results.contains(where: { !$0.injected }) {
+            session.backend.restorePendingSources(files)
         }
 
         return BackendInjectionResponse(
