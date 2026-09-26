@@ -2596,6 +2596,25 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         lastErrorValue = error
         lastSourceValue = source
         backendStateLock.unlock()
+
+        var metadata: [String: String] = [
+            "code": error.code
+        ]
+        if let source {
+            metadata["source"] = source
+        }
+        if let projectRoot {
+            metadata["project"] =
+                projectRoot
+        }
+
+        UnifiedDiagnosticLog.shared?
+            .append(
+                category: "error",
+                level: "error",
+                message: error.message,
+                metadata: metadata
+            )
     }
 
     private func clearLastError() {
