@@ -5,11 +5,15 @@ require 'fileutils'
 root = File.expand_path(__dir__)
 
 feature_project_count =
-  Integer(ENV.fetch('SMOKE_FEATURE_PROJECT_COUNT', '4'))
+  Integer(ENV.fetch('SMOKE_FEATURE_PROJECT_COUNT', '6'))
 swift_fillers_per_feature =
-  Integer(ENV.fetch('SMOKE_SWIFT_FILLERS_PER_FEATURE', '96'))
+  Integer(ENV.fetch('SMOKE_SWIFT_FILLERS_PER_FEATURE', '160'))
 objc_fillers_per_feature =
-  Integer(ENV.fetch('SMOKE_OBJC_FILLERS_PER_FEATURE', '24'))
+  Integer(ENV.fetch('SMOKE_OBJC_FILLERS_PER_FEATURE', '48'))
+main_swift_fillers =
+  Integer(ENV.fetch('SMOKE_MAIN_SWIFT_FILLERS', '160'))
+main_objc_fillers =
+  Integer(ENV.fetch('SMOKE_MAIN_OBJC_FILLERS', '80'))
 
 unless (1..12).cover?(feature_project_count)
   raise "SMOKE_FEATURE_PROJECT_COUNT must be between 1 and 12"
@@ -19,6 +23,12 @@ unless (0..512).cover?(swift_fillers_per_feature)
 end
 unless (0..256).cover?(objc_fillers_per_feature)
   raise "SMOKE_OBJC_FILLERS_PER_FEATURE must be between 0 and 256"
+end
+unless (0..1024).cover?(main_swift_fillers)
+  raise "SMOKE_MAIN_SWIFT_FILLERS must be between 0 and 1024"
+end
+unless (0..512).cover?(main_objc_fillers)
+  raise "SMOKE_MAIN_OBJC_FILLERS must be between 0 and 512"
 end
 
 feature_projects_root = File.join(root, 'FeatureProjects')
@@ -213,6 +223,47 @@ generated = project.main_group.new_group(
 matrix_ref = generated.new_file('SmokeFeatureMatrix.swift')
 target.source_build_phase.add_file_reference(matrix_ref)
 
+main_swift_dir = File.join(generated_root, 'MainSwift')
+main_objc_dir = File.join(generated_root, 'MainObjC')
+FileUtils.mkdir_p(main_swift_dir)
+FileUtils.mkdir_p(main_objc_dir)
+
+main_swift_group = generated.new_group('MainSwift', 'MainSwift')
+main_swift_fillers.times do |index|
+  name = format('LegacySwift%04d.swift', index)
+  File.write(
+    File.join(main_swift_dir, name),
+    <<~SWIFT
+      import Foundation
+
+      internal struct LegacySwift#{format('%04d', index)} {
+          let identifier: Int = #{index}
+          func checksum() -> Int { identifier &* 31 &+ #{index % 17} }
+      }
+    SWIFT
+  )
+  ref = main_swift_group.new_file(name)
+  target.source_build_phase.add_file_reference(ref)
+end
+
+main_objc_group = generated.new_group('MainObjC', 'MainObjC')
+main_objc_fillers.times do |index|
+  name = format('LegacyObjC%04d.m', index)
+  symbol = format('agent_legacy_objc_%04d', index)
+  File.write(
+    File.join(main_objc_dir, name),
+    <<~OBJC
+      #import <Foundation/Foundation.h>
+
+      NSInteger #{symbol}(NSInteger value) {
+          return value + #{index};
+      }
+    OBJC
+  )
+  ref = main_objc_group.new_file(name)
+  target.source_build_phase.add_file_reference(ref)
+end
+
 integration = project.main_group.new_group(
   'AgentInjectionIntegration'
 )
@@ -288,8 +339,19 @@ puts(
   "Generated #{project_path} with " \
   "#{feature_project_count} feature project(s)"
 )
+feature_swift_total =
+  feature_project_count * (swift_fillers_per_feature + 1)
+feature_objc_total =
+  feature_project_count * objc_fillers_per_feature
+app_swift_total = main_swift_fillers + 2
+app_objc_total = main_objc_fillers + 6
+
 puts(
   "Stress matrix: " \
-  "feature Swift=#{feature_project_count * (swift_fillers_per_feature + 1)}, " \
-  "feature ObjC=#{feature_project_count * objc_fillers_per_feature}"
+  "feature Swift=#{feature_swift_total}, " \
+  "feature ObjC=#{feature_objc_total}, " \
+  "app Swift=#{app_swift_total}, " \
+  "app ObjC=#{app_objc_total}, " \
+  "total Swift=#{feature_swift_total + app_swift_total}, " \
+  "total ObjC=#{feature_objc_total + app_objc_total}"
 )
