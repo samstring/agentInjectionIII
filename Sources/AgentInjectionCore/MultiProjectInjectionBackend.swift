@@ -385,9 +385,20 @@ public final class MultiProjectInjectionBackend:
         .filter(\.connected)
 
         guard !matchingTargets.isEmpty else {
-            return session.backend.inject(
-                files: files,
-                target: nil
+            let error = ControlError(
+                code: "RUNTIME_NOT_CONNECTED",
+                message: "No connected runtime is associated with project \(session.root)."
+            )
+            return BackendInjectionResponse(
+                results: files.map {
+                    InjectionResult(
+                        file: ProjectSessionIdentity.standardizedRoot($0),
+                        compiled: false,
+                        injected: false,
+                        message: error.message
+                    )
+                },
+                error: error
             )
         }
 
