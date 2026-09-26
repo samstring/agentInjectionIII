@@ -156,6 +156,11 @@ public final class MultiProjectInjectionBackend:
     private var selectedXcodePath: String?
     private var sessions: [String: ProjectInjectionSession] = [:]
     private var sessionOrder: [String] = []
+    // Runtime ownership is fixed for the lifetime of a connected runtime
+    // session. Registering a new project must never steal an already
+    // connected device from the project it was initially associated with.
+    private var runtimeProjectAssignments:
+        [String: String] = [:]
 
     public init(
         runtimeServer: InjectionNextRuntimeServer,
@@ -188,6 +193,12 @@ public final class MultiProjectInjectionBackend:
     public func projects() -> ProjectsResult {
         let current = snapshotSessions()
         let targets = runtimeServer.targets()
+        pruneRuntimeAssignments(
+            validTargetIDs:
+                Set(targets.map(\.id)),
+            validProjectIDs:
+                Set(current.map(\.id))
+        )
 
         let summaries = current.map { session in
             let pending = session.backend.pendingChanges()
@@ -305,6 +316,10 @@ public final class MultiProjectInjectionBackend:
             )
         }
         sessionOrder.removeAll { $0 == id }
+        runtimeProjectAssignments =
+            runtimeProjectAssignments.filter {
+                $0.value != id
+            }
         stateLock.unlock()
 
         return .success(projects())
@@ -1452,47 +1467,139 @@ public final class MultiProjectInjectionBackend:
         for target: RuntimeTarget,
         among sessions: [ProjectInjectionSession]
     ) -> ProjectInjectionSession? {
-        guard let runtimeRoot =
+        if let assignedID =
+                runtimeAssignment(
+                    for: target.id
+                ),
+           let assigned =
+                sessions.first(
+                    where: {
+                        $0.id == assignedID
+                    }
+                ) {
+            return assigned
+        }
+
+        let candidate:
+            ProjectInjectionSession?
+
+        if let runtimeRoot =
                 target.projectRoot,
-              !runtimeRoot.isEmpty else {
-            return sessions.count == 1
+           !runtimeRoot.isEmpty {
+            let runtime =
+                ProjectSessionIdentity
+                    .standardizedRoot(
+                        runtimeRoot
+                    )
+
+            if let exact =
+                    sessions.first(
+                        where: {
+                            $0.root == runtime
+                        }
+                    ) {
+                candidate = exact
+            } else {
+                let containing =
+                    sessions
+                        .filter {
+                            runtime.hasPrefix(
+                                $0.root + "/"
+                            )
+                        }
+                        .sorted {
+                            $0.root.count >
+                            $1.root.count
+                        }
+
+                if let first =
+                        containing.first {
+                    candidate = first
+                } else {
+                    // BUILD_WORKSPACE_DIRECTORY may be a parent of the
+                    // registered project root. Only use this fallback when
+                    // there is exactly one possible child. Once associated,
+                    // the assignment is pinned for this runtime connection.
+                    let children =
+                        sessions.filter {
+                            $0.root.hasPrefix(
+                                runtime + "/"
+                            )
+                        }
+                    candidate =
+                        children.count == 1
+                        ? children[0]
+                        : nil
+                }
+            }
+        } else {
+            candidate =
+                sessions.count == 1
                 ? sessions[0]
                 : nil
         }
 
-        let runtime =
-            ProjectSessionIdentity
-                .standardizedRoot(runtimeRoot)
-
-        if let exact = sessions.first(
-            where: { $0.root == runtime }
-        ) {
-            return exact
+        guard let candidate else {
+            return nil
         }
 
-        let containing = sessions
-            .filter {
-                runtime.hasPrefix(
-                    $0.root + "/"
+        let assignedID =
+            rememberRuntimeAssignment(
+                targetID: target.id,
+                projectID: candidate.id
+            )
+
+        return sessions.first {
+            $0.id == assignedID
+        } ?? candidate
+    }
+
+    private func runtimeAssignment(
+        for targetID: String
+    ) -> String? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return runtimeProjectAssignments[
+            targetID
+        ]
+    }
+
+    @discardableResult
+    private func rememberRuntimeAssignment(
+        targetID: String,
+        projectID: String
+    ) -> String {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        if let existing =
+                runtimeProjectAssignments[
+                    targetID
+                ] {
+            return existing
+        }
+
+        runtimeProjectAssignments[
+            targetID
+        ] = projectID
+        return projectID
+    }
+
+    private func pruneRuntimeAssignments(
+        validTargetIDs: Set<String>,
+        validProjectIDs: Set<String>
+    ) {
+        stateLock.lock()
+        runtimeProjectAssignments =
+            runtimeProjectAssignments.filter {
+                validTargetIDs.contains(
+                    $0.key
+                ) &&
+                validProjectIDs.contains(
+                    $0.value
                 )
             }
-            .sorted {
-                $0.root.count > $1.root.count
-            }
-
-        if let first = containing.first {
-            return first
-        }
-
-        let children = sessions.filter {
-            $0.root.hasPrefix(
-                runtime + "/"
-            )
-        }
-
-        return children.count == 1
-            ? children[0]
-            : nil
+        stateLock.unlock()
     }
 
     private func sessionForTarget(
