@@ -36,6 +36,11 @@ public final class AgentTraceServer {
     private let maximumBufferedEvents = 10_000
     private let maximumBufferedTestResults = 1_000
 
+    // Lifetime tracing scans and interposes the app's main image. Mature apps
+    // can legitimately take tens of seconds to initialize, so keep this
+    // separate from the shorter interactive trace command timeouts.
+    private let lifetimeStartTimeout: TimeInterval = 90
+
     public init(
         port: UInt16 = 8888,
         devicesEnabled: Bool = false,
@@ -319,7 +324,7 @@ public final class AgentTraceServer {
         }
 
         guard pending.semaphore.wait(
-            timeout: .now() + 20
+            timeout: .now() + lifetimeStartTimeout
         ) == .success else {
             clearPending(pending)
             return .failure(
