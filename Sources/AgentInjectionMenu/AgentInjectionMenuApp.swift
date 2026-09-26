@@ -1123,7 +1123,6 @@ private final class DaemonController:
     )
 
     private var ownedProcess: Process?
-    private var logHandle: FileHandle?
     private var projectRoots: [String]
     private var ownedCodeSignIdentity: String?
 
@@ -1200,8 +1199,6 @@ private final class DaemonController:
 
             self.ownedProcess = nil
             self.ownedCodeSignIdentity = nil
-            try? self.logHandle?.close()
-            self.logHandle = nil
             self.launchDaemon()
         }
     }
@@ -1215,8 +1212,6 @@ private final class DaemonController:
 
             ownedProcess = nil
             ownedCodeSignIdentity = nil
-            try? logHandle?.close()
-            logHandle = nil
         }
     }
 
@@ -1312,12 +1307,6 @@ private final class DaemonController:
         process.arguments = arguments
         process.environment = environment
 
-        if let handle = openLogHandle() {
-            process.standardOutput = handle
-            process.standardError = handle
-            logHandle = handle
-        }
-
         process.terminationHandler = {
             [weak self, weak process] _ in
             guard let self,
@@ -1329,8 +1318,6 @@ private final class DaemonController:
                 if self.ownedProcess === process {
                     self.ownedProcess = nil
                     self.ownedCodeSignIdentity = nil
-                    try? self.logHandle?.close()
-                    self.logHandle = nil
                 }
             }
         }
@@ -1341,8 +1328,6 @@ private final class DaemonController:
             ownedCodeSignIdentity =
                 codeSignIdentity
         } catch {
-            try? logHandle?.close()
-            logHandle = nil
             ownedProcess = nil
             ownedCodeSignIdentity = nil
         }
@@ -1478,55 +1463,6 @@ private final class DaemonController:
         return nil
     }
 
-    private func openLogHandle()
-        -> FileHandle? {
-        let fileManager =
-            FileManager.default
-        let file =
-            UnifiedDiagnosticLog
-                .defaultLogURL
-
-        do {
-            try fileManager
-                .createDirectory(
-                    at:
-                        file
-                            .deletingLastPathComponent(),
-                    withIntermediateDirectories:
-                        true
-                )
-
-            if !fileManager.fileExists(
-                atPath: file.path
-            ) {
-                fileManager.createFile(
-                    atPath: file.path,
-                    contents: nil
-                )
-            }
-
-            // Remove the legacy split log so there is only one
-            // documented diagnostic location going forward.
-            let legacy =
-                file
-                    .deletingLastPathComponent()
-                    .appendingPathComponent(
-                        "injectiond.log"
-                    )
-            try? fileManager.removeItem(
-                at: legacy
-            )
-
-            let handle =
-                try FileHandle(
-                    forWritingTo: file
-                )
-            try handle.seekToEnd()
-            return handle
-        } catch {
-            return nil
-        }
-    }
 }
 
 private final class GlobalHotKey {
