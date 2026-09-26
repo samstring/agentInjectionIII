@@ -60,6 +60,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] load-dylib DYLIB
       injectionctl [--socket PATH] doctor [SOURCE]
       injectionctl [--socket PATH] diagnostics [LIMIT]
+      injectionctl diagnostic-log [LIMIT]
       injectionctl [--socket PATH] [--target ID] screenshot [OUTPUT.png]
       injectionctl [--socket PATH] [--target ID] touch capture
       injectionctl [--socket PATH] [--target ID] touch read
@@ -79,7 +80,7 @@ private func printUsage() {
       injectionctl [--socket PATH] [--target ID] env NAME [VALUE]
       injectionctl [--socket PATH] profile [LIMIT]
       injectionctl [--socket PATH] call-order
-      injectionctl [--socket PATH] instances start
+      injectionctl [--socket PATH] instances start [FILTER]
       injectionctl [--socket PATH] instances read
       injectionctl [--socket PATH] instances stop
       injectionctl [--socket PATH] tests read [LIMIT]
@@ -143,6 +144,79 @@ let options = parseGlobalOptions()
 
 guard let command = options.arguments.first else {
     fatalUsage("Missing command.")
+}
+
+private struct DiagnosticLogOutput:
+    Codable {
+    let ok: Bool
+    let path: String
+    let lines: [String]
+}
+
+private func emitDiagnosticLog(
+    limit: Int
+) -> Never {
+    let path =
+        UnifiedDiagnosticLog
+            .defaultLogURL
+            .path
+
+    do {
+        let output =
+            DiagnosticLogOutput(
+                ok: true,
+                path: path,
+                lines:
+                    try UnifiedDiagnosticLog
+                        .tail(
+                            limit: limit
+                        )
+            )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [
+            .prettyPrinted,
+            .sortedKeys
+        ]
+        let data =
+            try encoder.encode(output)
+        FileHandle.standardOutput
+            .write(data)
+        FileHandle.standardOutput
+            .write(Data([0x0A]))
+        exit(0)
+    } catch {
+        emit(
+            .failure(
+                code:
+                    "DIAGNOSTIC_LOG_READ_FAILED",
+                message:
+                    "Unable to read \(path): \(error)"
+            )
+        )
+        exit(5)
+    }
+}
+
+if command == "diagnostic-log" {
+    guard options.arguments.count <= 2 else {
+        fatalUsage(
+            "diagnostic-log accepts at most one LIMIT."
+        )
+    }
+
+    var limit = 200
+    if options.arguments.count == 2 {
+        guard let parsed =
+                Int(options.arguments[1]),
+              parsed > 0 else {
+            fatalUsage(
+                "diagnostic-log limit must be a positive integer."
+            )
+        }
+        limit = parsed
+    }
+
+    emitDiagnosticLog(limit: limit)
 }
 
 let request: ControlRequest
@@ -477,20 +551,31 @@ case "call-order":
     )
 
 case "instances":
-    guard options.arguments.count == 2 else {
-        fatalUsage("instances requires start, read, or stop.")
+    guard options.arguments.count >= 2 &&
+          options.arguments.count <= 3 else {
+        fatalUsage("instances requires start [FILTER], read, or stop.")
     }
 
     switch options.arguments[1] {
     case "start":
         request = ControlRequest(
-            action: .instancesStart
+            action: .instancesStart,
+            filter:
+                options.arguments.count == 3
+                ? options.arguments[2]
+                : nil
         )
     case "read":
+        guard options.arguments.count == 2 else {
+            fatalUsage("instances read does not accept arguments.")
+        }
         request = ControlRequest(
             action: .instancesRead
         )
     case "stop":
+        guard options.arguments.count == 2 else {
+            fatalUsage("instances stop does not accept arguments.")
+        }
         request = ControlRequest(
             action: .instancesStop
         )

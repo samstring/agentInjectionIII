@@ -7,6 +7,7 @@ import Foundation
 @objcMembers
 public final class AgentInjectionRuntimeBridge: NSObject {
     private static var lifetimeActive = false
+    private static var previousMethodInclusionPattern: String?
 
     public static func callOrder() -> [String] {
         SwiftTrace.callOrder().map {
@@ -16,10 +17,32 @@ public final class AgentInjectionRuntimeBridge: NSObject {
 
     @discardableResult
     public static func startLifetimeTracking() -> Int {
+        startLifetimeTracking(
+            filter: nil
+        )
+    }
+
+    @objc(startLifetimeTrackingWithFilter:)
+    @discardableResult
+    public static func startLifetimeTracking(
+        filter: String?
+    ) -> Int {
         SwiftTrace.removeAllTraces()
         SwiftTrace.liveObjects.removeAll(
             keepingCapacity: true
         )
+
+        if !lifetimeActive {
+            previousMethodInclusionPattern =
+                SwiftTrace.methodInclusionPattern
+        }
+
+        if let filter,
+           !filter.isEmpty {
+            SwiftTrace.methodInclusionPattern =
+                filter
+        }
+
         SwiftTrace.swizzleFactory =
             SwiftTrace.LifetimeTracker.self
 
@@ -52,6 +75,9 @@ public final class AgentInjectionRuntimeBridge: NSObject {
         SwiftTrace.removeAllTraces()
         SwiftTrace.swizzleFactory =
             SwiftTrace.Decorated.self
+        SwiftTrace.methodInclusionPattern =
+            previousMethodInclusionPattern
+        previousMethodInclusionPattern = nil
         lifetimeActive = false
     }
 

@@ -36,6 +36,12 @@ public final class AgentTraceServer {
     private let maximumBufferedEvents = 10_000
     private let maximumBufferedTestResults = 1_000
 
+    // Lifetime tracing scans and interposes the app's main image. Mature apps
+    // can legitimately take a couple of minutes to initialize under the
+    // multi-project stress profile, so keep this separate from the shorter
+    // interactive trace command timeouts.
+    private let lifetimeStartTimeout: TimeInterval = 180
+
     public init(
         port: UInt16 = 8888,
         devicesEnabled: Bool = false,
@@ -515,8 +521,9 @@ public final class AgentTraceServer {
         )
     }
 
-    public func instancesStart()
-        -> Result<InstanceCountsResult, ControlError> {
+    public func instancesStart(
+        filter: String?
+    ) -> Result<InstanceCountsResult, ControlError> {
         let bridge: TraceBridgeClient
         let pending = PendingTraceCommand(
             expectedState: "instances_started"
@@ -548,7 +555,7 @@ public final class AgentTraceServer {
         do {
             try bridge.send(
                 action: "instances_start",
-                filter: nil
+                filter: filter
             )
         } catch {
             clearPending(pending)
@@ -561,7 +568,7 @@ public final class AgentTraceServer {
         }
 
         guard pending.semaphore.wait(
-            timeout: .now() + 20
+            timeout: .now() + lifetimeStartTimeout
         ) == .success else {
             clearPending(pending)
             return .failure(

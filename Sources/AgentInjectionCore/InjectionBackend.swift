@@ -50,7 +50,7 @@ public protocol InjectionBackend: AnyObject {
         filter: String?
     ) -> Result<TraceResult, ControlError>
     func callOrder() -> Result<CallOrderResult, ControlError>
-    func instancesStart() -> Result<InstanceCountsResult, ControlError>
+    func instancesStart(filter: String?) -> Result<InstanceCountsResult, ControlError>
     func instancesRead() -> Result<InstanceCountsResult, ControlError>
     func instancesStop() -> Result<InstanceCountsResult, ControlError>
     func testResults(limit: Int?) -> TestResultsResult
@@ -406,8 +406,9 @@ public final class ScaffoldInjectionBackend: InjectionBackend {
         )
     }
 
-    public func instancesStart()
-        -> Result<InstanceCountsResult, ControlError> {
+    public func instancesStart(
+        filter: String?
+    ) -> Result<InstanceCountsResult, ControlError> {
         .failure(
             ControlError(
                 code: "TRACE_BRIDGE_NOT_READY",

@@ -9,7 +9,7 @@ AgentInjectionLinkHostShim()
 
 struct DaemonOptions {
     var socketPath = "/tmp/agentInjectionIII.sock"
-    var projectRoot: String?
+    var projectRoots: [String] = []
     var runtimePort: UInt16 = 8887
     var tracePort: UInt16 = 8888
     var derivedDataRoot: String?
@@ -41,7 +41,9 @@ private func parseOptions() -> DaemonOptions {
             guard index + 1 < arguments.count else {
                 fatalUsage("--project requires a path")
             }
-            options.projectRoot = arguments[index + 1]
+            options.projectRoots.append(
+                arguments[index + 1]
+            )
             index += 2
 
         case "--runtime-port":
@@ -118,7 +120,7 @@ private func printUsage() {
 
       --socket PATH       Unix domain socket path for injectionctl.
                           Default: /tmp/agentInjectionIII.sock
-      --project ROOT      Project root used to resolve relative source paths.
+      --project ROOT      Register a project root. Repeat for multiple independent projects.
       --runtime-port PORT InjectionNext client runtime TCP port.
                           Default: 8887
       --trace-port PORT   AgentTraceBridge TCP port.
@@ -142,6 +144,62 @@ private func fatalUsage(_ message: String) -> Never {
 }
 
 let options = parseOptions()
+
+let unifiedLog: UnifiedDiagnosticLog?
+do {
+    let log =
+        try UnifiedDiagnosticLog
+            .configureDefault()
+    log.redirectStandardStreams()
+    unifiedLog = log
+} catch {
+    unifiedLog = nil
+    fputs(
+        "injectiond: unable to initialize unified diagnostics: \(error)\n",
+        stderr
+    )
+}
+
+let daemonLock: DaemonSingletonLock
+do {
+    daemonLock =
+        try DaemonSingletonLock()
+} catch DaemonSingletonLockError.alreadyRunning {
+    unifiedLog?.append(
+        category: "daemon",
+        level: "info",
+        message:
+            "A control-layer owner is already running; this injectiond instance will exit."
+    )
+    exit(0)
+} catch {
+    unifiedLog?.append(
+        category: "daemon",
+        level: "error",
+        message:
+            "Unable to acquire control-layer singleton lock: \(error)"
+    )
+    fputs(
+        "injectiond: unable to acquire singleton lock: \(error)\n",
+        stderr
+    )
+    exit(1)
+}
+
+unifiedLog?.append(
+    category: "daemon",
+    level: "info",
+    message: "Starting the single AgentInjectionIII control layer.",
+    metadata: [
+        "pid": String(getpid()),
+        "socket": options.socketPath,
+        "runtime_port":
+            String(options.runtimePort),
+        "trace_port":
+            String(options.tracePort)
+    ]
+)
+
 let logStore = AgentLogStore()
 let runtimeServer = InjectionNextRuntimeServer(
     port: options.runtimePort,
@@ -170,10 +228,10 @@ do {
     exit(1)
 }
 
-let backend = InjectionNextRuntimeBackend(
+let backend = MultiProjectInjectionBackend(
     runtimeServer: runtimeServer,
     traceServer: traceServer,
-    projectRoot: options.projectRoot,
+    projectRoots: options.projectRoots,
     derivedDataRoot: options.derivedDataRoot,
     codeSigningIdentity: options.codeSigningIdentity,
     xcodePath: options.xcodePath,

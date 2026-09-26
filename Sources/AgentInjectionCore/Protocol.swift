@@ -41,6 +41,9 @@ public enum ControlAction: String, Codable, Sendable {
     case xprobeSearch = "xprobe_search"
     case xprobeInspect = "xprobe_inspect"
     case eval
+    case projects
+    case projectAdd = "project_add"
+    case projectRemove = "project_remove"
 }
 
 public struct ControlRequest: Codable, Sendable {
@@ -51,6 +54,7 @@ public struct ControlRequest: Codable, Sendable {
     public let filter: String?
     public let limit: Int?
     public let target: String?
+    public let targets: [String]?
     public let payload: String?
     public let since: Double?
     public let environment: [String: String?]?
@@ -58,6 +62,7 @@ public struct ControlRequest: Codable, Sendable {
     public let name: String?
     public let enabled: Bool?
     public let objectID: Int?
+    public let projectID: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -67,13 +72,15 @@ public struct ControlRequest: Codable, Sendable {
         filter: String? = nil,
         limit: Int? = nil,
         target: String? = nil,
+        targets: [String]? = nil,
         payload: String? = nil,
         since: Double? = nil,
         environment: [String: String?]? = nil,
         scope: String? = nil,
         name: String? = nil,
         enabled: Bool? = nil,
-        objectID: Int? = nil
+        objectID: Int? = nil,
+        projectID: String? = nil
     ) {
         self.id = id
         self.action = action
@@ -82,6 +89,7 @@ public struct ControlRequest: Codable, Sendable {
         self.filter = filter
         self.limit = limit
         self.target = target
+        self.targets = targets
         self.payload = payload
         self.since = since
         self.environment = environment
@@ -89,6 +97,7 @@ public struct ControlRequest: Codable, Sendable {
         self.name = name
         self.enabled = enabled
         self.objectID = objectID
+        self.projectID = projectID
     }
 }
 
@@ -259,6 +268,8 @@ public struct RuntimeTarget: Codable, Sendable, Equatable {
     public let arch: String?
     public let temporaryPath: String?
     public let peerAddress: String?
+    public let projectRoot: String?
+    public let executable: String?
     public let isLocal: Bool
     public let connected: Bool
 
@@ -268,6 +279,8 @@ public struct RuntimeTarget: Codable, Sendable, Equatable {
         arch: String? = nil,
         temporaryPath: String? = nil,
         peerAddress: String? = nil,
+        projectRoot: String? = nil,
+        executable: String? = nil,
         isLocal: Bool,
         connected: Bool
     ) {
@@ -276,6 +289,8 @@ public struct RuntimeTarget: Codable, Sendable, Equatable {
         self.arch = arch
         self.temporaryPath = temporaryPath
         self.peerAddress = peerAddress
+        self.projectRoot = projectRoot
+        self.executable = executable
         self.isLocal = isLocal
         self.connected = connected
     }
@@ -286,6 +301,45 @@ public struct TargetsResult: Codable, Sendable {
 
     public init(targets: [RuntimeTarget]) {
         self.targets = targets
+    }
+}
+
+
+public struct ProjectSessionSummary: Codable, Sendable, Equatable {
+    public let id: String
+    public let root: String
+    public let displayName: String
+    public let watching: Bool
+    public let pendingCount: Int
+    public let targetIDs: [String]
+
+    public init(
+        id: String,
+        root: String,
+        displayName: String,
+        watching: Bool,
+        pendingCount: Int,
+        targetIDs: [String] = []
+    ) {
+        self.id = id
+        self.root = root
+        self.displayName = displayName
+        self.watching = watching
+        self.pendingCount = pendingCount
+        self.targetIDs = targetIDs
+    }
+}
+
+public struct ProjectsResult: Codable, Sendable {
+    public let projects: [ProjectSessionSummary]
+    public let unmatchedTargets: [RuntimeTarget]
+
+    public init(
+        projects: [ProjectSessionSummary],
+        unmatchedTargets: [RuntimeTarget] = []
+    ) {
+        self.projects = projects
+        self.unmatchedTargets = unmatchedTargets
     }
 }
 
@@ -709,6 +763,7 @@ public struct ControlResponse: Codable, Sendable {
     public let reorder: ProjectReorderPlan?
     public let xprobe: XprobeResult?
     public let eval: EvalResult?
+    public let projects: ProjectsResult?
     public let error: ControlError?
 
     public init(
@@ -735,6 +790,7 @@ public struct ControlResponse: Codable, Sendable {
         reorder: ProjectReorderPlan? = nil,
         xprobe: XprobeResult? = nil,
         eval: EvalResult? = nil,
+        projects: ProjectsResult? = nil,
         error: ControlError? = nil
     ) {
         self.id = id
@@ -760,6 +816,7 @@ public struct ControlResponse: Codable, Sendable {
         self.reorder = reorder
         self.xprobe = xprobe
         self.eval = eval
+        self.projects = projects
         self.error = error
     }
 
@@ -1009,6 +1066,17 @@ public struct ControlResponse: Codable, Sendable {
                     message: result.error
                         ?? "Eval failed."
                 )
+        )
+    }
+
+    public static func projects(
+        id: String,
+        result: ProjectsResult
+    ) -> ControlResponse {
+        ControlResponse(
+            id: id,
+            ok: true,
+            projects: result
         )
     }
 

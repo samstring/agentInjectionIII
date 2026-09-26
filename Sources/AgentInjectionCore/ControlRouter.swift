@@ -53,15 +53,61 @@ public final class ControlRouter {
             return .status(id: request.id, status)
 
         case .pendingChanges:
+            if let projectID = request.projectID {
+                guard let routing =
+                        backend as? ProjectRoutingBackend else {
+                    return projectRoutingUnsupported(
+                        request
+                    )
+                }
+                switch routing.pendingChanges(
+                    projectID: projectID
+                ) {
+                case .success(let result):
+                    return .pendingChanges(
+                        id: request.id,
+                        result: result
+                    )
+                case .failure(let error):
+                    return .failure(
+                        id: request.id,
+                        code: error.code,
+                        message: error.message
+                    )
+                }
+            }
+
             return .pendingChanges(
                 id: request.id,
                 result: backend.pendingChanges()
             )
 
         case .injectPending:
-            let result = backend.injectPending(
-                target: request.target
-            )
+            let result: BackendInjectionResponse
+            if let projectID = request.projectID {
+                guard let routing =
+                        backend as? ProjectRoutingBackend else {
+                    return projectRoutingUnsupported(
+                        request
+                    )
+                }
+                if let targets = request.targets {
+                    result = routing.injectPending(
+                        projectID: projectID,
+                        targets: targets
+                    )
+                } else {
+                    result = routing.injectPending(
+                        projectID: projectID,
+                        target: request.target
+                    )
+                }
+            } else {
+                result = backend.injectPending(
+                    target: request.target
+                )
+            }
+
             return .injection(
                 id: request.id,
                 results: result.results,
@@ -77,10 +123,33 @@ public final class ControlRouter {
                 )
             }
 
-            let result = backend.inject(
-                files: files,
-                target: request.target
-            )
+            let result: BackendInjectionResponse
+            if let projectID = request.projectID {
+                guard let routing =
+                        backend as? ProjectRoutingBackend else {
+                    return projectRoutingUnsupported(
+                        request
+                    )
+                }
+                if let targets = request.targets {
+                    result = routing.inject(
+                        files: files,
+                        projectID: projectID,
+                        targets: targets
+                    )
+                } else {
+                    result = routing.inject(
+                        files: files,
+                        projectID: projectID,
+                        target: request.target
+                    )
+                }
+            } else {
+                result = backend.inject(
+                    files: files,
+                    target: request.target
+                )
+            }
             return .injection(
                 id: request.id,
                 results: result.results,
@@ -107,12 +176,62 @@ public final class ControlRouter {
             )
 
         case .doctor:
+            if let projectID = request.projectID {
+                guard let routing =
+                        backend as? ProjectRoutingBackend else {
+                    return projectRoutingUnsupported(
+                        request
+                    )
+                }
+                switch routing.doctor(
+                    path: request.path,
+                    projectID: projectID
+                ) {
+                case .success(let report):
+                    return .doctor(
+                        id: request.id,
+                        report: report
+                    )
+                case .failure(let error):
+                    return .failure(
+                        id: request.id,
+                        code: error.code,
+                        message: error.message
+                    )
+                }
+            }
+
             return .doctor(
                 id: request.id,
                 report: backend.doctor(path: request.path)
             )
 
         case .diagnostics:
+            if let projectID = request.projectID {
+                guard let routing =
+                        backend as? ProjectRoutingBackend else {
+                    return projectRoutingUnsupported(
+                        request
+                    )
+                }
+                switch routing.diagnostics(
+                    limit: request.limit,
+                    projectID: projectID
+                ) {
+                case .success(let result):
+                    return .diagnostics(
+                        id: request.id,
+                        result: result
+                    )
+                case .failure(let error):
+                    return .failure(
+                        id: request.id,
+                        code: error.code,
+                        message: error.message
+                    )
+                }
+            }
+
             return .diagnostics(
                 id: request.id,
                 result: backend.diagnostics(
@@ -139,6 +258,30 @@ public final class ControlRouter {
             }
 
         case .targets:
+            if let projectID = request.projectID {
+                guard let routing =
+                        backend as? ProjectRoutingBackend else {
+                    return projectRoutingUnsupported(
+                        request
+                    )
+                }
+                switch routing.targets(
+                    projectID: projectID
+                ) {
+                case .success(let result):
+                    return .targets(
+                        id: request.id,
+                        result: result
+                    )
+                case .failure(let error):
+                    return .failure(
+                        id: request.id,
+                        code: error.code,
+                        message: error.message
+                    )
+                }
+            }
+
             return .targets(
                 id: request.id,
                 result: backend.targets()
@@ -468,7 +611,9 @@ public final class ControlRouter {
             }
 
         case .instancesStart:
-            switch backend.instancesStart() {
+            switch backend.instancesStart(
+                filter: request.filter
+            ) {
             case .success(let result):
                 return .instances(
                     id: request.id,
@@ -586,6 +731,80 @@ public final class ControlRouter {
                 )
             }
 
+        case .projects:
+            guard let routing =
+                    backend as? ProjectRoutingBackend else {
+                return projectRoutingUnsupported(
+                    request
+                )
+            }
+            return .projects(
+                id: request.id,
+                result: routing.projects()
+            )
+
+        case .projectAdd:
+            guard let routing =
+                    backend as? ProjectRoutingBackend else {
+                return projectRoutingUnsupported(
+                    request
+                )
+            }
+            guard let path = request.path,
+                  !path.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_PATH",
+                    message: "project_add requires a project root path."
+                )
+            }
+            switch routing.addProject(
+                root: path
+            ) {
+            case .success:
+                return .projects(
+                    id: request.id,
+                    result: routing.projects()
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
+        case .projectRemove:
+            guard let routing =
+                    backend as? ProjectRoutingBackend else {
+                return projectRoutingUnsupported(
+                    request
+                )
+            }
+            guard let projectID = request.projectID,
+                  !projectID.isEmpty else {
+                return .failure(
+                    id: request.id,
+                    code: "MISSING_PROJECT_ID",
+                    message: "project_remove requires projectID."
+                )
+            }
+            switch routing.removeProject(
+                id: projectID
+            ) {
+            case .success(let result):
+                return .projects(
+                    id: request.id,
+                    result: result
+                )
+            case .failure(let error):
+                return .failure(
+                    id: request.id,
+                    code: error.code,
+                    message: error.message
+                )
+            }
+
         case .eval:
             guard let objectID = request.objectID else {
                 return .failure(
@@ -644,5 +863,15 @@ public final class ControlRouter {
                 )
             }
         }
+    }
+
+    private func projectRoutingUnsupported(
+        _ request: ControlRequest
+    ) -> ControlResponse {
+        .failure(
+            id: request.id,
+            code: "MULTI_PROJECT_UNSUPPORTED",
+            message: "The active backend does not support project sessions."
+        )
     }
 }

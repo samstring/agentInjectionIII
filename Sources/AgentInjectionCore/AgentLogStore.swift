@@ -29,6 +29,12 @@ public final class AgentLogStore {
             )
         }
         lock.unlock()
+
+        UnifiedDiagnosticLog.shared?.append(
+            category: "runtime",
+            level: level,
+            message: message
+        )
     }
 
     public func get(

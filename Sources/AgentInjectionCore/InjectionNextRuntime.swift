@@ -213,6 +213,8 @@ public struct InjectionRuntimeStatus: Codable, Sendable {
     public let arch: String?
     public let temporaryPath: String?
     public let peerAddress: String?
+    public let projectRoot: String?
+    public let executable: String?
     public let isLocal: Bool
 
     public init(
@@ -222,6 +224,8 @@ public struct InjectionRuntimeStatus: Codable, Sendable {
         arch: String? = nil,
         temporaryPath: String? = nil,
         peerAddress: String? = nil,
+        projectRoot: String? = nil,
+        executable: String? = nil,
         isLocal: Bool = true
     ) {
         self.id = id
@@ -230,6 +234,8 @@ public struct InjectionRuntimeStatus: Codable, Sendable {
         self.arch = arch
         self.temporaryPath = temporaryPath
         self.peerAddress = peerAddress
+        self.projectRoot = projectRoot
+        self.executable = executable
         self.isLocal = isLocal
     }
 
@@ -241,6 +247,8 @@ public struct InjectionRuntimeStatus: Codable, Sendable {
             arch: arch,
             temporaryPath: temporaryPath,
             peerAddress: peerAddress,
+            projectRoot: projectRoot,
+            executable: executable,
             isLocal: isLocal,
             connected: connected
         )
@@ -277,6 +285,8 @@ private final class InjectionRuntimeClient {
     private var platformValue: String?
     private var archValue: String?
     private var temporaryPathValue: String?
+    private var projectRootValue: String?
+    private var executableValue: String?
     private var connectedValue = true
     private var pendingInjection: PendingRuntimeInjection?
     private var pendingScreenshot: PendingRuntimeScreenshot?
@@ -413,6 +423,15 @@ private final class InjectionRuntimeClient {
 
                 case .projectRoot:
                     let value = try InjectionNextWire.readString(from: fd)
+                    updateState {
+                        projectRootValue = URL(
+                            fileURLWithPath: NSString(
+                                string: value
+                            ).expandingTildeInPath
+                        )
+                        .standardizedFileURL
+                        .path
+                    }
                     logStore.append(
                         "Runtime project root: \(value)"
                     )
@@ -429,6 +448,9 @@ private final class InjectionRuntimeClient {
 
                 case .executable:
                     let value = try InjectionNextWire.readString(from: fd)
+                    updateState {
+                        executableValue = value
+                    }
                     logStore.append(
                         "Runtime executable: \(value)"
                     )
@@ -476,6 +498,8 @@ private final class InjectionRuntimeClient {
             arch: archValue,
             temporaryPath: temporaryPathValue,
             peerAddress: peerAddress,
+            projectRoot: projectRootValue,
+            executable: executableValue,
             isLocal: isLocal
         )
     }
@@ -1450,7 +1474,15 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     }
 
     public func status() -> BackendStatus {
-        let runtime = runtimeServer.status()
+        status(target: nil)
+    }
+
+    public func status(
+        target: String?
+    ) -> BackendStatus {
+        let runtime = runtimeServer.status(
+            target: target
+        )
 
         return BackendStatus(
             name: name,
@@ -1797,6 +1829,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         )
     }
 
+    func restorePendingSources(
+        _ files: [String]
+    ) {
+        _ = pendingSources.add(files)
+    }
+
     public func loadDylib(
         path: String,
         target: String?
@@ -1833,12 +1871,25 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public func diagnostics(
         limit: Int?
     ) -> DiagnosticsResult {
+        diagnostics(
+            limit: limit,
+            target: nil
+        )
+    }
+
+    public func diagnostics(
+        limit: Int?,
+        target: String?
+    ) -> DiagnosticsResult {
         DiagnosticsResult(
-            status: status(),
+            status: status(target: target),
             targets: targets(),
             trace: traceServer.status(),
             compilerState: compilerState(),
-            doctor: doctor(path: nil),
+            doctor: doctor(
+                path: nil,
+                target: target
+            ),
             logs: logs(
                 since: nil,
                 limit: limit
@@ -2224,9 +2275,12 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         traceServer.callOrderSnapshot()
     }
 
-    public func instancesStart()
-        -> Result<InstanceCountsResult, ControlError> {
-        traceServer.instancesStart()
+    public func instancesStart(
+        filter: String?
+    ) -> Result<InstanceCountsResult, ControlError> {
+        traceServer.instancesStart(
+            filter: filter
+        )
     }
 
     public func instancesRead()
@@ -2310,7 +2364,19 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     }
 
     public func doctor(path: String?) -> DoctorReport {
-        let runtime = runtimeServer.status()
+        doctor(
+            path: path,
+            target: nil
+        )
+    }
+
+    public func doctor(
+        path: String?,
+        target: String?
+    ) -> DoctorReport {
+        let runtime = runtimeServer.status(
+            target: target
+        )
         let normalizedSource =
             path.map { normalize(path: $0) }
         let compilerDiagnostics = compiler.diagnostics(
@@ -2533,6 +2599,25 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
         lastErrorValue = error
         lastSourceValue = source
         backendStateLock.unlock()
+
+        var metadata: [String: String] = [
+            "code": error.code
+        ]
+        if let source {
+            metadata["source"] = source
+        }
+        if let projectRoot {
+            metadata["project"] =
+                projectRoot
+        }
+
+        UnifiedDiagnosticLog.shared?
+            .append(
+                category: "error",
+                level: "error",
+                message: error.message,
+                metadata: metadata
+            )
     }
 
     private func clearLastError() {

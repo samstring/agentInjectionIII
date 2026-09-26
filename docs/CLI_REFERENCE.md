@@ -464,3 +464,34 @@ all(injections[].injected == true)
 ~~~
 
 对于真实 UI 改动，再配合 screenshot、App marker、logs 或 trace 做行为验证。
+
+
+# 统一诊断日志
+
+## diagnostic-log
+
+`diagnostic-log` 直接读取当天统一持久日志，不依赖 injectiond 正常运行：
+
+~~~bash
+"$CTL" diagnostic-log
+"$CTL" diagnostic-log 300
+~~~
+
+统一日志位置：
+
+~~~text
+~/Library/Logs/AgentInjectionIII/diagnostics.log
+~~~
+
+每天第一次启动 injectiond 时，如果该文件最后修改日期不是今天，会直接清空旧内容后重新记录。
+
+Agent 排障推荐顺序：
+
+~~~text
+1. injectionctl status
+2. 如果 daemon 不可达：injectionctl diagnostic-log 300
+3. daemon 可达：diagnostics / last-error / events
+4. 需要完整上下文：diagnostic-log 300
+~~~
+
+详细流程见 `docs/TROUBLESHOOTING.md`。
