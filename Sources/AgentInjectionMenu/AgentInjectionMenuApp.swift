@@ -748,9 +748,10 @@ final class MenuStatusModel: ObservableObject {
 
     func chooseProject() {
         let panel = NSOpenPanel()
-        panel.prompt = "Add Project"
+        panel.prompt =
+            MenuL10n.addProjectPrompt
         panel.message =
-            "Choose one or more independent project directories for AgentInjectionIII to watch."
+            MenuL10n.addProjectMessage
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
