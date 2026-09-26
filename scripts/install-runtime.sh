@@ -163,8 +163,8 @@ build_runtime() {
   fi
 
   local runtime_binary="$source_bundle/${family}Injection"
-  if ! /usr/bin/nm -gjU "$runtime_binary" 2>/dev/null |
-       grep -q '_AgentInjectionRuntimeBridgeAnchor'; then
+  if ! /usr/bin/nm -an "$runtime_binary" 2>/dev/null |
+       grep -q 'AgentInjectionRuntimeBridgeAnchor'; then
     echo "error: AgentInjectionRuntimeBridge linker root is missing from $runtime_binary" >&2
     exit 1
   fi
