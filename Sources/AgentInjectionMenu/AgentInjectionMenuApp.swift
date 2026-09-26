@@ -3,6 +3,185 @@ import AppKit
 import Carbon
 import AgentInjectionCore
 
+private enum MenuLanguage {
+    case zhHans
+    case en
+
+    static var current: MenuLanguage {
+        let environment =
+            ProcessInfo.processInfo.environment
+        let configured =
+            environment[
+                "AGENT_INJECTION_LANGUAGE"
+            ] ??
+            UserDefaults.standard.string(
+                forKey:
+                    "AgentInjectionIII.language"
+            )
+
+        if let configured {
+            let normalized =
+                configured.lowercased()
+            if normalized.hasPrefix("en") {
+                return .en
+            }
+            if normalized.hasPrefix("zh") {
+                return .zhHans
+            }
+        }
+
+        // Product default is Simplified Chinese. English can be selected
+        // with AGENT_INJECTION_LANGUAGE=en or the UserDefaults key above.
+        return .zhHans
+    }
+}
+
+private enum MenuL10n {
+    private static func value(
+        zh: String,
+        en: String
+    ) -> String {
+        MenuLanguage.current == .zhHans
+            ? zh
+            : en
+    }
+
+    static var idle: String {
+        value(zh: "待机", en: "Idle")
+    }
+    static var busy: String {
+        value(zh: "处理中", en: "Busy")
+    }
+    static var ok: String {
+        value(zh: "正常", en: "OK")
+    }
+    static var error: String {
+        value(zh: "错误", en: "Error")
+    }
+    static var projects: String {
+        value(zh: "项目", en: "Projects")
+    }
+    static var addProject: String {
+        value(zh: "添加项目…", en: "Add Project…")
+    }
+    static var addProjectPrompt: String {
+        value(zh: "添加项目", en: "Add Project")
+    }
+    static var addProjectMessage: String {
+        value(
+            zh: "选择一个或多个独立项目目录，AgentInjectionIII 会分别监听。",
+            en: "Choose one or more independent project directories for AgentInjectionIII to watch."
+        )
+    }
+    static var addProjectHelp: String {
+        value(
+            zh: "添加独立项目目录",
+            en: "Add independent project directory"
+        )
+    }
+    static var removeProjectHelp: String {
+        value(
+            zh: "移除项目",
+            en: "Remove project"
+        )
+    }
+    static var noProjects: String {
+        value(
+            zh: "尚未添加项目目录。",
+            en: "No project directories registered."
+        )
+    }
+    static var unmatchedRuntimes: String {
+        value(
+            zh: "未匹配的运行实例",
+            en: "Unmatched Runtime Sessions"
+        )
+    }
+    static var noMatchingRuntime: String {
+        value(
+            zh: "没有匹配的运行实例",
+            en: "No matching runtime"
+        )
+    }
+    static var injectAll: String {
+        value(
+            zh: "注入所有已修改文件",
+            en: "Inject All Changed Files"
+        )
+    }
+    static var hotKeyDescription: String {
+        value(
+            zh: "Control + - 会按项目路由修改文件，只发送到该项目已选择的设备。",
+            en: "Control + - routes each changed source to its owning project and selected runtime devices."
+        )
+    }
+    static var daemonUnavailable: String {
+        value(
+            zh: "injectiond 正在启动或当前不可用",
+            en: "injectiond is starting or unavailable"
+        )
+    }
+    static var quit: String {
+        value(
+            zh: "退出 AgentInjectionIII",
+            en: "Quit AgentInjectionIII"
+        )
+    }
+    static var runtime: String {
+        value(zh: "运行实例", en: "Runtime")
+    }
+    static var selectedDevice: String {
+        value(
+            zh: "注入到已选设备",
+            en: "Inject → Selected Device"
+        )
+    }
+    static var noDeviceSelected: String {
+        value(
+            zh: "未选择设备",
+            en: "No Device Selected"
+        )
+    }
+    static var stateHelpPrefix: String {
+        value(
+            zh: "状态：",
+            en: "State: "
+        )
+    }
+
+    static func changed(
+        _ count: Int
+    ) -> String {
+        MenuLanguage.current == .zhHans
+            ? "\(count) 个修改"
+            : "\(count) changed"
+    }
+
+    static func injectDevices(
+        _ count: Int
+    ) -> String {
+        MenuLanguage.current == .zhHans
+            ? "注入到 \(count) 台设备"
+            : "Inject → \(count) Devices"
+    }
+
+    static func includeRuntimeHelp(
+        project: String
+    ) -> String {
+        MenuLanguage.current == .zhHans
+            ? "将此运行实例包含在 \(project) 的热重载中。"
+            : "Include this runtime in injections for \(project)."
+    }
+
+    static func updated(
+        _ time: String
+    ) -> String {
+        MenuLanguage.current == .zhHans
+            ? "更新于 \(time)"
+            : "Updated \(time)"
+    }
+}
+
 private enum MenuInjectionState {
     case idle
     case busy
@@ -12,13 +191,13 @@ private enum MenuInjectionState {
     var title: String {
         switch self {
         case .idle:
-            return "Idle"
+            return MenuL10n.idle
         case .busy:
-            return "Busy"
+            return MenuL10n.busy
         case .ok:
-            return "OK"
+            return MenuL10n.ok
         case .error:
-            return "Error"
+            return MenuL10n.error
         }
     }
 
@@ -57,7 +236,11 @@ struct AgentInjectionIIIApp: App {
     var body: some Scene {
         MenuBarExtra {
             StatusMenuView(model: model)
-                .frame(minWidth: 460)
+                .frame(width: 430)
+                .fixedSize(
+                    horizontal: false,
+                    vertical: true
+                )
                 .task {
                     model.refreshDiagnostics()
                 }
