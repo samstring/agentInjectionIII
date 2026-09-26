@@ -91,10 +91,17 @@ public final class ControlRouter {
                         request
                     )
                 }
-                result = routing.injectPending(
-                    projectID: projectID,
-                    target: request.target
-                )
+                if let targets = request.targets {
+                    result = routing.injectPending(
+                        projectID: projectID,
+                        targets: targets
+                    )
+                } else {
+                    result = routing.injectPending(
+                        projectID: projectID,
+                        target: request.target
+                    )
+                }
             } else {
                 result = backend.injectPending(
                     target: request.target
@@ -124,11 +131,19 @@ public final class ControlRouter {
                         request
                     )
                 }
-                result = routing.inject(
-                    files: files,
-                    projectID: projectID,
-                    target: request.target
-                )
+                if let targets = request.targets {
+                    result = routing.inject(
+                        files: files,
+                        projectID: projectID,
+                        targets: targets
+                    )
+                } else {
+                    result = routing.inject(
+                        files: files,
+                        projectID: projectID,
+                        target: request.target
+                    )
+                }
             } else {
                 result = backend.inject(
                     files: files,
