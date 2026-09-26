@@ -37,9 +37,10 @@ public final class AgentTraceServer {
     private let maximumBufferedTestResults = 1_000
 
     // Lifetime tracing scans and interposes the app's main image. Mature apps
-    // can legitimately take tens of seconds to initialize, so keep this
-    // separate from the shorter interactive trace command timeouts.
-    private let lifetimeStartTimeout: TimeInterval = 90
+    // can legitimately take a couple of minutes to initialize under the
+    // multi-project stress profile, so keep this separate from the shorter
+    // interactive trace command timeouts.
+    private let lifetimeStartTimeout: TimeInterval = 180
 
     public init(
         port: UInt16 = 8888,
