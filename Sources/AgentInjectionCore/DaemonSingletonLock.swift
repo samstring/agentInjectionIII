@@ -50,27 +50,14 @@ public final class DaemonSingletonLock:
 
         let fd = Darwin.open(
             url.path,
-            O_CREAT | O_RDWR,
+            O_CREAT |
+            O_RDWR |
+            O_EXLOCK |
+            O_NONBLOCK,
             mode_t(S_IRUSR | S_IWUSR)
         )
         guard fd >= 0 else {
-            throw DaemonSingletonLockError
-                .openFailed(
-                    "Unable to open daemon lock at \(url.path): " +
-                    String(
-                        cString:
-                            strerror(errno)
-                    )
-                )
-        }
-
-        guard Darwin.flock(
-            fd,
-            LOCK_EX | LOCK_NB
-        ) == 0 else {
             let code = errno
-            Darwin.close(fd)
-
             if code == EWOULDBLOCK ||
                code == EAGAIN {
                 throw DaemonSingletonLockError
@@ -78,8 +65,8 @@ public final class DaemonSingletonLock:
             }
 
             throw DaemonSingletonLockError
-                .lockFailed(
-                    "Unable to acquire daemon lock at \(url.path): " +
+                .openFailed(
+                    "Unable to open and lock daemon state at \(url.path): " +
                     String(
                         cString:
                             strerror(code)
@@ -92,7 +79,7 @@ public final class DaemonSingletonLock:
         let state =
             "pid=\(getpid())\n" +
             "started=\(ISO8601DateFormatter().string(from: Date()))\n"
-        _ = state.withCString {
+        state.withCString {
             Darwin.ftruncate(fd, 0)
             Darwin.write(
                 fd,
@@ -104,7 +91,8 @@ public final class DaemonSingletonLock:
     }
 
     deinit {
-        _ = Darwin.flock(fd, LOCK_UN)
+        // Closing an O_EXLOCK descriptor releases the advisory lock,
+        // including after process crash or SIGKILL.
         Darwin.close(fd)
     }
 }
