@@ -611,7 +611,9 @@ public final class ControlRouter {
             }
 
         case .instancesStart:
-            switch backend.instancesStart() {
+            switch backend.instancesStart(
+                filter: request.filter
+            ) {
             case .success(let result):
                 return .instances(
                     id: request.id,
