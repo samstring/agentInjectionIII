@@ -176,7 +176,9 @@ final class MenuStatusModel: ObservableObject {
             withTimeInterval: 2,
             repeats: true
         ) { [weak self] _ in
-            self?.refreshStatus()
+            Task { @MainActor in
+                self?.refreshStatus()
+            }
         }
 
         terminateObserver =
@@ -507,7 +509,7 @@ final class MenuStatusModel: ObservableObject {
                     self?.refreshDiagnostics()
                 }
             } catch {
-                daemonController.ensureRunning()
+                self?.daemonController.ensureRunning()
                 DispatchQueue.main.async {
                     self?.manualInjectionError =
                         String(describing: error)
@@ -540,7 +542,7 @@ final class MenuStatusModel: ObservableObject {
                     self?.refreshStatus()
                 }
             } catch {
-                daemonController.ensureRunning()
+                self?.daemonController.ensureRunning()
             }
         }
     }
