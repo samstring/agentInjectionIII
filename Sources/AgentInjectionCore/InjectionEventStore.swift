@@ -45,6 +45,41 @@ public final class InjectionEventStore {
             )
         }
         lock.unlock()
+
+        var metadata: [String: String] = [
+            "phase": phase
+        ]
+        if let source {
+            metadata["source"] = source
+        }
+        if let target {
+            metadata["target"] = target
+        }
+        if let compileMilliseconds {
+            metadata["compile_ms"] =
+                String(
+                    format: "%.2f",
+                    compileMilliseconds
+                )
+        }
+        if let linkMilliseconds {
+            metadata["link_ms"] =
+                String(
+                    format: "%.2f",
+                    linkMilliseconds
+                )
+        }
+
+        UnifiedDiagnosticLog.shared?.append(
+            category: "injection",
+            level:
+                phase == "failed"
+                ? "error"
+                : "info",
+            message: message
+                ?? phase,
+            metadata: metadata
+        )
     }
 
     public func snapshot(
