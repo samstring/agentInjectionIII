@@ -3,6 +3,52 @@ import AppKit
 import Carbon
 import AgentInjectionCore
 
+private enum MenuInjectionState {
+    case idle
+    case busy
+    case ok
+    case error
+
+    var title: String {
+        switch self {
+        case .idle:
+            return "Idle"
+        case .busy:
+            return "Busy"
+        case .ok:
+            return "OK"
+        case .error:
+            return "Error"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .idle:
+            return .gray
+        case .busy:
+            return .orange
+        case .ok:
+            return .green
+        case .error:
+            return .red
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .idle:
+            return "circle"
+        case .busy:
+            return "clock.fill"
+        case .ok:
+            return "checkmark.circle.fill"
+        case .error:
+            return "exclamationmark.circle.fill"
+        }
+    }
+}
+
 @main
 struct AgentInjectionIIIApp: App {
     @StateObject private var model =
@@ -16,11 +62,16 @@ struct AgentInjectionIIIApp: App {
                     model.refreshDiagnostics()
                 }
         } label: {
-            Image(systemName: model.symbolName)
-                .help(model.statusTitle)
-                .task {
-                    model.start()
-                }
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.fill")
+                Circle()
+                    .fill(model.statusLightColor)
+                    .frame(width: 7, height: 7)
+            }
+            .help(model.statusTitle)
+            .task {
+                model.start()
+            }
         }
         .menuBarExtraStyle(.window)
     }
