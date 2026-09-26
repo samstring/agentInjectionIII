@@ -1,5 +1,4 @@
 import UIKit
-import SmokeFeature
 
 @objc(SmokeLifetimeProbe)
 private final class SmokeLifetimeProbe: NSObject {
@@ -155,10 +154,14 @@ final class SmokeViewController: UIViewController {
             encoding: .utf8
         )
 
-        if let featureMarker = documentURL(
-            named: "agentInjection-feature.txt"
-        ) {
-            try? smokeFeatureMessage().write(
+        for feature in smokeFeatureMessages() {
+            guard let featureMarker = documentURL(
+                named: "agentInjection-feature-\(feature.id).txt"
+            ) else {
+                continue
+            }
+
+            try? feature.message.write(
                 to: featureMarker,
                 atomically: true,
                 encoding: .utf8
