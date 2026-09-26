@@ -1474,7 +1474,15 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     }
 
     public func status() -> BackendStatus {
-        let runtime = runtimeServer.status()
+        status(target: nil)
+    }
+
+    public func status(
+        target: String?
+    ) -> BackendStatus {
+        let runtime = runtimeServer.status(
+            target: target
+        )
 
         return BackendStatus(
             name: name,
@@ -1857,12 +1865,25 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     public func diagnostics(
         limit: Int?
     ) -> DiagnosticsResult {
+        diagnostics(
+            limit: limit,
+            target: nil
+        )
+    }
+
+    public func diagnostics(
+        limit: Int?,
+        target: String?
+    ) -> DiagnosticsResult {
         DiagnosticsResult(
-            status: status(),
+            status: status(target: target),
             targets: targets(),
             trace: traceServer.status(),
             compilerState: compilerState(),
-            doctor: doctor(path: nil),
+            doctor: doctor(
+                path: nil,
+                target: target
+            ),
             logs: logs(
                 since: nil,
                 limit: limit
@@ -2334,7 +2355,19 @@ public final class InjectionNextRuntimeBackend: InjectionBackend {
     }
 
     public func doctor(path: String?) -> DoctorReport {
-        let runtime = runtimeServer.status()
+        doctor(
+            path: path,
+            target: nil
+        )
+    }
+
+    public func doctor(
+        path: String?,
+        target: String?
+    ) -> DoctorReport {
+        let runtime = runtimeServer.status(
+            target: target
+        )
         let normalizedSource =
             path.map { normalize(path: $0) }
         let compilerDiagnostics = compiler.diagnostics(
