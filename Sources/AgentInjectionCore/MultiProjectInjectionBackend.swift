@@ -1255,9 +1255,12 @@ public final class MultiProjectInjectionBackend:
         traceServer.callOrderSnapshot()
     }
 
-    public func instancesStart()
-        -> Result<InstanceCountsResult, ControlError> {
-        traceServer.instancesStart()
+    public func instancesStart(
+        filter: String?
+    ) -> Result<InstanceCountsResult, ControlError> {
+        traceServer.instancesStart(
+            filter: filter
+        )
     }
 
     public func instancesRead()
