@@ -147,3 +147,56 @@ Error -> red    (injection or daemon error)
 ```
 
 The state light is shown in the macOS Menu Bar label, the popover header, every project row and every runtime row. This mirrors InjectionIII's `Idle / Busy / OK / Error` status semantics while using native SwiftUI colors rather than copying InjectionIII image assets.
+
+
+## Single control layer
+
+`injectiond` is the only control-layer owner. It acquires a non-blocking per-user `flock` at:
+
+```text
+~/Library/Application Support/AgentInjectionIII/injectiond.lock
+```
+
+The lock is acquired before the runtime server, trace server, or Unix control socket are started. A second `injectiond` exits immediately if the lock is already held.
+
+Menu Bar instances are connect-first clients and may attempt to spawn the daemon only when the control socket does not respond. The singleton lock resolves cold-start races. CLI + Skill never own the daemon lifecycle.
+
+Only the lock owner may reach `UnixSocketServer.run()`, which performs stale control-socket cleanup before bind.
+
+## Stable runtime ownership
+
+Runtime-to-project routing uses runtime-reported `projectRoot` and `executable`, but the selected project is pinned for the lifetime of each runtime connection:
+
+```text
+runtime target id -> project id
+```
+
+Adding another project does not recompute or steal an already connected runtime. Assignments are discarded when the runtime disconnects or its project is removed.
+
+This is especially important when InjectionNext reports `BUILD_WORKSPACE_DIRECTORY`, which can be a parent directory containing more than one registered project.
+
+## Unified diagnostics
+
+Persistent troubleshooting output is written to one file only:
+
+```text
+~/Library/Logs/AgentInjectionIII/diagnostics.log
+```
+
+The stream includes daemon lifecycle, runtime connection metadata, routing decisions, injection lifecycle events, errors, and raw stdout/stderr from the daemon.
+
+On daemon startup, an existing log from a previous calendar day is truncated. Same-day daemon restarts append to the current file.
+
+`injectionctl diagnostic-log [LIMIT]` reads this file without requiring a live daemon.
+
+## Menu localization and sizing
+
+The Menu Bar UI uses a localization layer with Simplified Chinese as the product default and English as an alternate language. English can currently be selected with:
+
+```text
+AGENT_INJECTION_LANGUAGE=en
+```
+
+or the `AgentInjectionIII.language` UserDefaults key.
+
+The Menu Bar window sizes vertically to its actual content. Operational diagnostics (Doctor, total connected runtimes, Trace status, recent diagnostics) are intentionally not rendered in the normal Menu Bar UI; they remain available through CLI diagnostics and the unified log.
