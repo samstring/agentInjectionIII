@@ -153,6 +153,7 @@ build_runtime() {
     PLATFORM_DIR="$platform_root" \
     CODE_SIGNING_ALLOWED=NO \
     $install_name \
+    'OTHER_LDFLAGS=$(inherited) -Xlinker -u -Xlinker _AgentInjectionRuntimeBridgeAnchor' \
     LD_RUNPATH_SEARCH_PATHS="@executable_path/Frameworks @loader_path/Frameworks @loader_path/${family}Injection.bundle/Frameworks $swift_libs $concurrency_libs $xctest_frameworks $xctest_support $xccore_frameworks"
 
   local source_bundle="$BUILD/Debug-$sdk/${family}Injection.bundle"
@@ -163,8 +164,56 @@ build_runtime() {
 
   local runtime_binary="$source_bundle/${family}Injection"
   if ! /usr/bin/nm -gjU "$runtime_binary" 2>/dev/null |
-       grep -q 'AgentInjectionRuntimeBridge'; then
-    echo "error: AgentInjectionRuntimeBridge was not compiled into $runtime_binary" >&2
+       grep -q '_AgentInjectionRuntimeBridgeAnchor'; then
+    echo "error: AgentInjectionRuntimeBridge linker root is missing from $runtime_binary" >&2
+    exit 1
+  fi
+
+  if ! /usr/bin/strings "$runtime_binary" |
+       grep -q '^AgentInjectionRuntimeBridge
+  rm -rf "$destination"
+  cp -R "$source_bundle" "$destination"
+}
+
+set_plist() {
+  local plist="$1"
+  local key="$2"
+  local value="$3"
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$plist" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist"
+}
+
+SIM_BUNDLE="$RUNTIME/simulator/iOSInjection.bundle"
+DEVICE_BUNDLE="$RUNTIME/device/iOSDevInjection.bundle"
+
+build_runtime iOS iphonesimulator iPhoneSimulator iphonesimulator "$ARCH" "$SIM_BUNDLE"
+
+SIM_PLIST="$SIM_BUNDLE/Info.plist"
+set_plist "$SIM_PLIST" INJECTION_NOSTANDALONE 1
+set_plist "$SIM_PLIST" INJECTION_HOST 127.0.0.1
+set_plist "$SIM_PLIST" UserHome "$HOME"
+
+if [ "$SIMULATOR_ONLY" != "1" ]; then
+  build_runtime iOSDev iphoneos iPhoneOS iphoneos arm64 "$DEVICE_BUNDLE"
+
+  DEVICE_PLIST="$DEVICE_BUNDLE/Info.plist"
+  set_plist "$DEVICE_PLIST" INJECTION_NOSTANDALONE 1
+  /usr/libexec/PlistBuddy -c "Delete :INJECTION_HOST" "$DEVICE_PLIST" >/dev/null 2>&1 || true
+  set_plist "$DEVICE_PLIST" UserHome "$HOME"
+fi
+
+echo
+echo "Installed AgentInjectionIII runtimes:"
+echo "  simulator: $SIM_BUNDLE"
+if [ "$SIMULATOR_ONLY" != "1" ]; then
+  echo "  device:    $DEVICE_BUNDLE"
+  echo
+  echo "Device runtime deliberately has no INJECTION_HOST setting so it can use InjectionNext multicast discovery."
+else
+  echo "  device:    skipped (AGENT_INJECTION_SIMULATOR_ONLY=1)"
+fi
+; then
+    echo "error: AgentInjectionRuntimeBridge Objective-C runtime name is missing from $runtime_binary" >&2
     exit 1
   fi
 
