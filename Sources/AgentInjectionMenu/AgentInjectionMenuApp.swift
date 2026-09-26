@@ -1213,19 +1213,6 @@ private final class DaemonController:
             : nil
     }
 
-    private func removeStaleSocket() {
-        guard FileManager.default
-            .fileExists(
-                atPath: socketPath
-            ) else {
-            return
-        }
-
-        try? FileManager.default.removeItem(
-            atPath: socketPath
-        )
-    }
-
     private func resolveDaemonURL() -> URL? {
         let fileManager = FileManager.default
         let environment =
@@ -1309,24 +1296,20 @@ private final class DaemonController:
 
     private func openLogHandle()
         -> FileHandle? {
-        let fileManager = FileManager.default
-        let logs =
-            fileManager
-                .homeDirectoryForCurrentUser
-                .appendingPathComponent(
-                    "Library/Logs/AgentInjectionIII",
-                    isDirectory: true
-                )
+        let fileManager =
+            FileManager.default
+        let file =
+            UnifiedDiagnosticLog
+                .defaultLogURL
 
         do {
-            try fileManager.createDirectory(
-                at: logs,
-                withIntermediateDirectories: true
-            )
-
-            let file =
-                logs.appendingPathComponent(
-                    "injectiond.log"
+            try fileManager
+                .createDirectory(
+                    at:
+                        file
+                            .deletingLastPathComponent(),
+                    withIntermediateDirectories:
+                        true
                 )
 
             if !fileManager.fileExists(
@@ -1337,6 +1320,18 @@ private final class DaemonController:
                     contents: nil
                 )
             }
+
+            // Remove the legacy split log so there is only one
+            // documented diagnostic location going forward.
+            let legacy =
+                file
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(
+                        "injectiond.log"
+                    )
+            try? fileManager.removeItem(
+                at: legacy
+            )
 
             let handle =
                 try FileHandle(
