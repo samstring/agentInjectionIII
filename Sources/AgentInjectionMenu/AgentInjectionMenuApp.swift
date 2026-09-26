@@ -1477,8 +1477,8 @@ private struct StatusMenuView: View {
             )
             .foregroundStyle(
                 target.connected
-                    ? .primary
-                    : .secondary
+                    ? Color.primary
+                    : Color.secondary
             )
 
             VStack(
@@ -1520,8 +1520,8 @@ private struct StatusMenuView: View {
                 )
                 .foregroundStyle(
                     target.connected
-                        ? .green
-                        : .secondary
+                        ? Color.green
+                        : Color.secondary
                 )
         }
         .padding(.leading, 18)
