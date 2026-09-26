@@ -1546,7 +1546,8 @@ public final class MultiProjectInjectionBackend:
         let assignedID =
             rememberRuntimeAssignment(
                 targetID: target.id,
-                projectID: candidate.id
+                projectID: candidate.id,
+                projectRoot: candidate.root
             )
 
         return sessions.first {
@@ -1567,21 +1568,38 @@ public final class MultiProjectInjectionBackend:
     @discardableResult
     private func rememberRuntimeAssignment(
         targetID: String,
-        projectID: String
+        projectID: String,
+        projectRoot: String
     ) -> String {
         stateLock.lock()
-        defer { stateLock.unlock() }
 
         if let existing =
                 runtimeProjectAssignments[
                     targetID
                 ] {
+            stateLock.unlock()
             return existing
         }
 
         runtimeProjectAssignments[
             targetID
         ] = projectID
+        stateLock.unlock()
+
+        UnifiedDiagnosticLog.shared?
+            .append(
+                category: "routing",
+                level: "info",
+                message:
+                    "Pinned runtime session to project.",
+                metadata: [
+                    "runtime": targetID,
+                    "project_id": projectID,
+                    "project_root":
+                        projectRoot
+                ]
+            )
+
         return projectID
     }
 
