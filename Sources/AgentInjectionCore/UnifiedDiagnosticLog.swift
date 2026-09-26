@@ -105,8 +105,6 @@ public final class UnifiedDiagnosticLog: @unchecked Sendable {
         message: String,
         metadata: [String: String] = [:]
     ) {
-        let timestamp =
-            formatter.string(from: Date())
         let metadataText =
             metadata
                 .sorted { $0.key < $1.key }
@@ -115,15 +113,17 @@ public final class UnifiedDiagnosticLog: @unchecked Sendable {
                 }
                 .joined(separator: " ")
 
+        lock.lock()
+        defer { lock.unlock() }
+
+        let timestamp =
+            formatter.string(from: Date())
         let suffix =
             metadataText.isEmpty
             ? ""
             : " | \(metadataText)"
         let line =
             "\(timestamp) [\(category)] [\(level)] \(message)\(suffix)\n"
-
-        lock.lock()
-        defer { lock.unlock() }
 
         guard let data =
                 line.data(using: .utf8) else {
@@ -132,7 +132,6 @@ public final class UnifiedDiagnosticLog: @unchecked Sendable {
 
         do {
             try handle.write(contentsOf: data)
-            try handle.synchronize()
         } catch {
             // Logging must never take the daemon down.
         }
