@@ -122,3 +122,28 @@ Menu Bar persists an array of project roots instead of one root. It starts injec
 6. Refactor Menu Bar persistence/UI to multiple project roots.
 7. Add tests for source routing, runtime matching, protocol backward compatibility, and independent pending stores.
 8. Run Swift tests and existing simulator smoke CI.
+
+
+## Menu Bar device selection and InjectionIII-style state
+
+Runtime-to-project association remains automatic. Device selection only controls which matching runtimes receive an injection when one project is running on multiple devices.
+
+Selection rules:
+
+- every matching runtime is selected by default
+- users can deselect individual runtimes under a project
+- deselection is persisted using a runtime fingerprint based on project, locality/address, executable, platform and architecture
+- `Ctrl+-` respects the per-project selections
+- an empty selected set never falls back to an unrelated runtime
+- multi-target requests are sent as one project-scoped control request; partial failure re-queues the pending sources
+
+The visual state follows InjectionIII's four-state model:
+
+```text
+Idle  -> gray   (no matching runtime)
+Busy  -> orange (injection in progress)
+OK    -> green  (runtime connected / last injection succeeded)
+Error -> red    (injection or daemon error)
+```
+
+The state light is shown in the macOS Menu Bar label, the popover header, every project row and every runtime row. This mirrors InjectionIII's `Idle / Busy / OK / Error` status semantics while using native SwiftUI colors rather than copying InjectionIII image assets.
