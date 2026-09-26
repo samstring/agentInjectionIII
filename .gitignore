@@ -4,4 +4,5 @@
 xcuserdata/
 DerivedData/
 node_modules/
-Examples/SimulatorSmokeApp/FeatureProject/Generated/
+Examples/SimulatorSmokeApp/FeatureProjects/
+Examples/SimulatorSmokeApp/Generated/
