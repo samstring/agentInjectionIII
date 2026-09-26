@@ -54,6 +54,7 @@ public struct ControlRequest: Codable, Sendable {
     public let filter: String?
     public let limit: Int?
     public let target: String?
+    public let targets: [String]?
     public let payload: String?
     public let since: Double?
     public let environment: [String: String?]?
@@ -71,6 +72,7 @@ public struct ControlRequest: Codable, Sendable {
         filter: String? = nil,
         limit: Int? = nil,
         target: String? = nil,
+        targets: [String]? = nil,
         payload: String? = nil,
         since: Double? = nil,
         environment: [String: String?]? = nil,
@@ -87,6 +89,7 @@ public struct ControlRequest: Codable, Sendable {
         self.filter = filter
         self.limit = limit
         self.target = target
+        self.targets = targets
         self.payload = payload
         self.since = since
         self.environment = environment
