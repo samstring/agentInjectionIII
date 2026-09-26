@@ -170,7 +170,11 @@ build_runtime() {
   fi
 
   if ! /usr/bin/strings "$runtime_binary" |
-       grep -q '^AgentInjectionRuntimeBridge
+       grep -Fq 'AgentInjectionRuntimeBridge'; then
+    echo "error: AgentInjectionRuntimeBridge Objective-C runtime name is missing from $runtime_binary" >&2
+    exit 1
+  fi
+
   rm -rf "$destination"
   cp -R "$source_bundle" "$destination"
 }
