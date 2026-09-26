@@ -97,6 +97,16 @@ final class MenuStatusModel: ObservableObject {
         String?
     @Published private(set) var lastUpdated:
         Date?
+    @Published private var injectingProjectIDs =
+        Set<String>()
+    @Published private var injectingTargetIDs =
+        Set<String>()
+    @Published private var projectInjectionErrors:
+        [String: String] = [:]
+    @Published private var targetInjectionErrors:
+        [String: String] = [:]
+    @Published private var deselectedTargetKeys:
+        Set<String>
 
     private let socketPath: String
     private let worker = DispatchQueue(
@@ -114,6 +124,8 @@ final class MenuStatusModel: ObservableObject {
         "AgentInjectionIII.projectRoots"
     private static let legacyProjectRootDefaultsKey =
         "AgentInjectionIII.projectRoot"
+    private static let deselectedTargetsDefaultsKey =
+        "AgentInjectionIII.deselectedRuntimeTargets"
 
     init(
         socketPath: String =
@@ -152,6 +164,12 @@ final class MenuStatusModel: ObservableObject {
 
         self.socketPath = socketPath
         self.persistedProjectRoots = roots
+        self.deselectedTargetKeys = Set(
+            UserDefaults.standard.stringArray(
+                forKey:
+                    Self.deselectedTargetsDefaultsKey
+            ) ?? []
+        )
         self.daemonController =
             DaemonController(
                 socketPath: socketPath,
@@ -160,33 +178,45 @@ final class MenuStatusModel: ObservableObject {
     }
 
     var statusTitle: String {
-        guard connectionError == nil,
-              let daemonStatus else {
-            return "AgentInjectionIII Offline"
-        }
-
-        if diagnostics?.lastError.error != nil {
-            return "AgentInjectionIII Issue"
-        }
-
-        return daemonStatus.backend.ready
-            ? "AgentInjectionIII Ready"
-            : "AgentInjectionIII Listening"
+        "AgentInjectionIII \(statusLightState.title)"
     }
 
     var symbolName: String {
-        guard connectionError == nil,
-              let daemonStatus else {
-            return "circle"
+        statusLightState.symbolName
+    }
+
+    var statusLightColor: Color {
+        statusLightState.color
+    }
+
+    var statusLightText: String {
+        statusLightState.title
+    }
+
+    private var statusLightState:
+        MenuInjectionState {
+        if connectionError != nil ||
+           manualInjectionError != nil ||
+           diagnostics?.lastError.error != nil ||
+           !projectInjectionErrors.isEmpty {
+            return .error
         }
 
-        if diagnostics?.lastError.error != nil {
-            return "exclamationmark.circle.fill"
+        if !injectingProjectIDs.isEmpty {
+            return .busy
         }
 
-        return daemonStatus.backend.ready
-            ? "bolt.circle.fill"
-            : "circle.dotted"
+        let hasConnectedRuntime =
+            projects?.projects.contains {
+                project in
+                targets(for: project).contains {
+                    $0.connected
+                }
+            } ?? false
+
+        return hasConnectedRuntime
+            ? .ok
+            : .idle
     }
 
     var totalPendingCount: Int {
@@ -357,36 +387,178 @@ final class MenuStatusModel: ObservableObject {
     }
 
     func injectPendingChanges(
-        projectID: String? = nil,
-        target: String? = nil
+        projectID: String? = nil
     ) {
+        let candidates =
+            (projects?.projects ?? [])
+                .filter {
+                    projectID == nil ||
+                    $0.id == projectID
+                }
+                .filter {
+                    !(pending(
+                        for: $0.id
+                    )?.files.isEmpty ?? true)
+                }
+
+        guard !candidates.isEmpty else {
+            return
+        }
+
+        var requests: [(
+            projectID: String,
+            targetIDs: [String]
+        )] = []
+
+        var immediateErrors:
+            [String: String] = [:]
+
+        for project in candidates {
+            let matchedTargets =
+                targets(for: project)
+                    .filter(\.connected)
+            let selected =
+                matchedTargets.filter {
+                    isTargetSelected(
+                        $0,
+                        for: project.id
+                    )
+                }
+
+            if selected.isEmpty {
+                immediateErrors[project.id] =
+                    matchedTargets.isEmpty
+                    ? "No connected runtime is associated with \(project.displayName)."
+                    : "No runtime device is selected for \(project.displayName)."
+                continue
+            }
+
+            requests.append(
+                (
+                    projectID: project.id,
+                    targetIDs:
+                        selected.map(\.id)
+                )
+            )
+        }
+
+        for (projectID, message)
+            in immediateErrors {
+            projectInjectionErrors[
+                projectID
+            ] = message
+        }
+
+        guard !requests.isEmpty else {
+            manualInjectionError =
+                immediateErrors.values.first
+            return
+        }
+
         let socketPath = socketPath
+        let projectIDs =
+            Set(requests.map(\.projectID))
+        let targetIDs =
+            Set(requests.flatMap(\.targetIDs))
+
+        injectingProjectIDs.formUnion(
+            projectIDs
+        )
+        injectingTargetIDs.formUnion(
+            targetIDs
+        )
+        for projectID in projectIDs {
+            projectInjectionErrors[
+                projectID
+            ] = nil
+        }
+        for targetID in targetIDs {
+            targetInjectionErrors[
+                targetID
+            ] = nil
+        }
+        manualInjectionError = nil
 
         worker.async { [weak self] in
-            do {
-                let response = try UnixSocketClient(
-                    socketPath: socketPath
-                ).send(
-                    ControlRequest(
-                        action: .injectPending,
-                        target: target,
-                        projectID: projectID
-                    )
-                )
+            var projectErrors:
+                [String: String] = [:]
+            var targetErrors:
+                [String: String] = [:]
 
-                DispatchQueue.main.async {
-                    self?.manualInjectionError =
-                        response.ok
-                        ? nil
-                        : response.error?.message
-                    self?.refreshStatus()
-                    self?.refreshDiagnostics()
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self?.manualInjectionError =
+            for request in requests {
+                do {
+                    let response =
+                        try UnixSocketClient(
+                            socketPath: socketPath
+                        ).send(
+                            ControlRequest(
+                                action:
+                                    .injectPending,
+                                targets:
+                                    request.targetIDs,
+                                projectID:
+                                    request.projectID
+                            )
+                        )
+
+                    if !response.ok {
+                        let message =
+                            response.error?.message
+                            ?? "Injection failed."
+                        projectErrors[
+                            request.projectID
+                        ] = message
+                        for targetID
+                            in request.targetIDs {
+                            targetErrors[
+                                targetID
+                            ] = message
+                        }
+                    }
+                } catch {
+                    let message =
                         String(describing: error)
+                    projectErrors[
+                        request.projectID
+                    ] = message
+                    for targetID
+                        in request.targetIDs {
+                        targetErrors[
+                            targetID
+                        ] = message
+                    }
                 }
+            }
+
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                self.injectingProjectIDs
+                    .subtract(projectIDs)
+                self.injectingTargetIDs
+                    .subtract(targetIDs)
+
+                for projectID in projectIDs {
+                    self.projectInjectionErrors[
+                        projectID
+                    ] = projectErrors[
+                        projectID
+                    ]
+                }
+                for targetID in targetIDs {
+                    self.targetInjectionErrors[
+                        targetID
+                    ] = targetErrors[
+                        targetID
+                    ]
+                }
+
+                self.manualInjectionError =
+                    projectErrors.values.first
+                self.refreshStatus()
+                self.refreshDiagnostics()
             }
         }
     }
@@ -478,6 +650,125 @@ final class MenuStatusModel: ObservableObject {
             .filter {
                 ids.contains($0.id)
             } ?? []
+    }
+
+    func isTargetSelected(
+        _ target: RuntimeTarget,
+        for projectID: String
+    ) -> Bool {
+        !deselectedTargetKeys.contains(
+            targetSelectionKey(
+                target,
+                projectID: projectID
+            )
+        )
+    }
+
+    func setTargetSelected(
+        _ target: RuntimeTarget,
+        projectID: String,
+        selected: Bool
+    ) {
+        let key = targetSelectionKey(
+            target,
+            projectID: projectID
+        )
+
+        if selected {
+            deselectedTargetKeys.remove(key)
+        } else {
+            deselectedTargetKeys.insert(key)
+        }
+
+        UserDefaults.standard.set(
+            Array(deselectedTargetKeys)
+                .sorted(),
+            forKey:
+                Self.deselectedTargetsDefaultsKey
+        )
+    }
+
+    func projectStatusColor(
+        _ project: ProjectSessionSummary
+    ) -> Color {
+        projectState(project).color
+    }
+
+    func projectStatusText(
+        _ project: ProjectSessionSummary
+    ) -> String {
+        projectState(project).title
+    }
+
+    func targetStatusColor(
+        _ target: RuntimeTarget
+    ) -> Color {
+        targetState(target).color
+    }
+
+    func targetStatusText(
+        _ target: RuntimeTarget
+    ) -> String {
+        targetState(target).title
+    }
+
+    private func projectState(
+        _ project: ProjectSessionSummary
+    ) -> MenuInjectionState {
+        if injectingProjectIDs.contains(
+            project.id
+        ) {
+            return .busy
+        }
+
+        if projectInjectionErrors[
+            project.id
+        ] != nil {
+            return .error
+        }
+
+        return targets(for: project)
+            .contains(where: \.connected)
+            ? .ok
+            : .idle
+    }
+
+    private func targetState(
+        _ target: RuntimeTarget
+    ) -> MenuInjectionState {
+        if injectingTargetIDs.contains(
+            target.id
+        ) {
+            return .busy
+        }
+
+        if targetInjectionErrors[
+            target.id
+        ] != nil {
+            return .error
+        }
+
+        return target.connected
+            ? .ok
+            : .idle
+    }
+
+    private func targetSelectionKey(
+        _ target: RuntimeTarget,
+        projectID: String
+    ) -> String {
+        [
+            projectID,
+            target.isLocal
+                ? "local"
+                : (target.peerAddress
+                   ?? "remote"),
+            target.projectRoot ?? "",
+            target.executable ?? "",
+            target.platform ?? "",
+            target.arch ?? ""
+        ]
+        .joined(separator: "|")
     }
 
     func refreshDiagnostics() {
