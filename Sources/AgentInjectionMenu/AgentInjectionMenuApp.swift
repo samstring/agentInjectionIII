@@ -1463,12 +1463,21 @@ private struct StatusMenuView: View {
             alignment: .leading,
             spacing: 10
         ) {
-            HStack {
-                Image(
-                    systemName: model.symbolName
-                )
-                Text(model.statusTitle)
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(model.statusLightColor)
+                    .frame(width: 10, height: 10)
+                    .help(
+                        "Injection state: \(model.statusLightText)"
+                    )
+                Text("AgentInjectionIII")
                     .font(.headline)
+                Text(model.statusLightText)
+                    .font(.caption)
+                    .bold()
+                    .foregroundStyle(
+                        model.statusLightColor
+                    )
                 Spacer()
                 Button {
                     model.refreshStatus()
@@ -1718,7 +1727,20 @@ private struct StatusMenuView: View {
             alignment: .leading,
             spacing: 5
         ) {
-            HStack {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(
+                        model.projectStatusColor(
+                            project
+                        )
+                    )
+                    .frame(width: 8, height: 8)
+                    .help(
+                        "Project state: " +
+                        model.projectStatusText(
+                            project
+                        )
+                    )
                 Image(
                     systemName: "folder"
                 )
@@ -1772,7 +1794,31 @@ private struct StatusMenuView: View {
                     targets,
                     id: \.id
                 ) { target in
-                    runtimeRow(target)
+                    Toggle(
+                        isOn: Binding(
+                            get: {
+                                model.isTargetSelected(
+                                    target,
+                                    for: project.id
+                                )
+                            },
+                            set: {
+                                model.setTargetSelected(
+                                    target,
+                                    projectID:
+                                        project.id,
+                                    selected: $0
+                                )
+                            }
+                        )
+                    ) {
+                        runtimeRow(target)
+                    }
+                    .toggleStyle(.checkbox)
+                    .padding(.leading, 18)
+                    .help(
+                        "Include this runtime in injections for \(project.displayName)."
+                    )
                 }
             }
 
@@ -1804,15 +1850,27 @@ private struct StatusMenuView: View {
                     }
                 }
 
+                let selectedCount =
+                    targets.filter {
+                        $0.connected &&
+                        model.isTargetSelected(
+                            $0,
+                            for: project.id
+                        )
+                    }.count
+
                 Button(
-                    targets.count > 1
-                        ? "Inject → \(targets.count) Devices"
-                        : "Inject Changed Files"
+                    selectedCount > 1
+                        ? "Inject → \(selectedCount) Devices"
+                        : selectedCount == 1
+                            ? "Inject → Selected Device"
+                            : "No Device Selected"
                 ) {
                     model.injectPendingChanges(
                         projectID: project.id
                     )
                 }
+                .disabled(selectedCount == 0)
             }
         }
         .padding(.vertical, 4)
@@ -1867,18 +1925,26 @@ private struct StatusMenuView: View {
 
             Spacer()
 
-            Circle()
-                .frame(
-                    width: 7,
-                    height: 7
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(
+                        model.targetStatusColor(
+                            target
+                        )
+                    )
+                    .frame(
+                        width: 7,
+                        height: 7
+                    )
+                Text(
+                    model.targetStatusText(
+                        target
+                    )
                 )
-                .foregroundStyle(
-                    target.connected
-                        ? Color.green
-                        : Color.secondary
-                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
         }
-        .padding(.leading, 18)
     }
 
     @ViewBuilder
@@ -1888,11 +1954,12 @@ private struct StatusMenuView: View {
         HStack {
             Text("Injection")
             Spacer()
-            Text(
-                diagnostics.status.ready
-                    ? "Ready"
-                    : "Listening"
-            )
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(model.statusLightColor)
+                    .frame(width: 7, height: 7)
+                Text(model.statusLightText)
+            }
             .foregroundStyle(.secondary)
         }
 
