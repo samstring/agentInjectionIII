@@ -36,6 +36,8 @@ final class MenuStatusModel: ObservableObject {
         PendingChangesResult?
     @Published private(set) var projects:
         ProjectsResult?
+    @Published private(set) var runtimeTargets:
+        TargetsResult?
     @Published private(set) var pendingByProject:
         [String: PendingChangesResult] = [:]
     @Published private(set) var manualInjectionError:
@@ -230,6 +232,11 @@ final class MenuStatusModel: ObservableObject {
                         action: .pendingChanges
                     )
                 )
+                let targetsResponse = try client.send(
+                    ControlRequest(
+                        action: .targets
+                    )
+                )
 
                 guard let status =
                         statusResponse.status else {
@@ -270,6 +277,8 @@ final class MenuStatusModel: ObservableObject {
                 DispatchQueue.main.async {
                     self?.daemonStatus = status
                     self?.projects = projects
+                    self?.runtimeTargets =
+                        targetsResponse.targets
                     self?.pendingChanges =
                         pendingResponse.pendingChanges
                     self?.pendingByProject =
@@ -283,6 +292,7 @@ final class MenuStatusModel: ObservableObject {
                 DispatchQueue.main.async {
                     self?.daemonStatus = nil
                     self?.projects = nil
+                    self?.runtimeTargets = nil
                     self?.pendingChanges = nil
                     self?.pendingByProject = [:]
                     self?.connectionError =
@@ -411,7 +421,7 @@ final class MenuStatusModel: ObservableObject {
         for project: ProjectSessionSummary
     ) -> [RuntimeTarget] {
         let ids = Set(project.targetIDs)
-        return diagnostics?.targets.targets
+        return runtimeTargets?.targets
             .filter {
                 ids.contains($0.id)
             } ?? []
