@@ -324,7 +324,7 @@ public final class AgentTraceServer {
         }
 
         guard pending.semaphore.wait(
-            timeout: .now() + lifetimeStartTimeout
+            timeout: .now() + 20
         ) == .success else {
             clearPending(pending)
             return .failure(
@@ -566,7 +566,7 @@ public final class AgentTraceServer {
         }
 
         guard pending.semaphore.wait(
-            timeout: .now() + 20
+            timeout: .now() + lifetimeStartTimeout
         ) == .success else {
             clearPending(pending)
             return .failure(
